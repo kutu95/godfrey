@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Captain John Godfrey Chat</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="app-header">
+        <h1>Captain John Godfrey — Master, SS Georgette, 1876</h1>
+        <p>Converse with the Captain in the aftermath of the Georgette inquiry.</p>
+        <div class="provider-controls">
+          <label for="providerSelect">Response provider:</label>
+          <select id="providerSelect">
+            <option value="claude">Claude (Anthropic)</option>
+            <option value="openai">OpenAI</option>
+          </select>
+          <button id="saveProviderButton" type="button">Use Provider</button>
+          <span id="providerStatus" class="provider-status"></span>
+        </div>
+      </header>
+
+      <section id="chatWindow" class="chat-window" aria-live="polite"></section>
+
+      <div id="typingIndicator" class="typing-indicator hidden">
+        Captain Godfrey is composing his reply...
+      </div>
+
+      <form id="chatForm" class="chat-form">
+        <input
+          id="messageInput"
+          type="text"
+          placeholder="Ask Captain Godfrey a question..."
+          autocomplete="off"
+          required
+        />
+        <button id="voiceInputButton" type="button">Dictate</button>
+        <button type="submit">Send</button>
+      </form>
+
+      <section class="speech-panel">
+        <h2>Speech Settings</h2>
+        <div class="speech-grid">
+          <label for="speechModeSelect">Speech mode</label>
+          <select id="speechModeSelect">
+            <option value="none">No speech</option>
+            <option value="simple">Simple speech (browser)</option>
+            <option value="openai">OpenAI speech</option>
+          </select>
+
+          <label for="speechExpressionInput">Voice expression prompt</label>
+          <textarea
+            id="speechExpressionInput"
+            rows="2"
+            placeholder="Example: restrained bitterness, wounded pride, formal naval bearing"
+          ></textarea>
+
+          <label for="britishAccentBoostInput">British accent boost</label>
+          <div class="checkbox-row">
+            <input id="britishAccentBoostInput" type="checkbox" checked />
+            <span>Force British pronunciation cues and RP-style delivery where possible.</span>
+          </div>
+        </div>
+
+        <div id="simpleSpeechSettings" class="speech-subpanel">
+          <h3>Simple Speech</h3>
+          <div class="speech-grid">
+            <label for="simpleVoiceSelect">Voice</label>
+            <select id="simpleVoiceSelect"></select>
+
+            <label for="simpleRateInput">Rate (0.6 - 1.4)</label>
+            <input id="simpleRateInput" type="number" min="0.6" max="1.4" step="0.1" value="1" />
+
+            <label for="simplePitchInput">Pitch (0.6 - 1.6)</label>
+            <input id="simplePitchInput" type="number" min="0.6" max="1.6" step="0.1" value="0.9" />
+          </div>
+        </div>
+
+        <div id="openaiSpeechSettings" class="speech-subpanel">
+          <h3>OpenAI Speech</h3>
+          <div class="speech-grid">
+            <label for="openaiVoiceSelect">Voice</label>
+            <select id="openaiVoiceSelect">
+              <option value="marin">marin</option>
+              <option value="cedar">cedar</option>
+              <option value="alloy">alloy</option>
+              <option value="ash">ash</option>
+              <option value="ballad">ballad</option>
+              <option value="coral">coral</option>
+              <option value="echo">echo</option>
+              <option value="sage">sage</option>
+              <option value="shimmer">shimmer</option>
+              <option value="verse">verse</option>
+            </select>
+
+            <label for="openaiTtsModelSelect">Model</label>
+            <select id="openaiTtsModelSelect">
+              <option value="gpt-4o-mini-tts">gpt-4o-mini-tts</option>
+              <option value="tts-1-hd">tts-1-hd</option>
+              <option value="tts-1">tts-1</option>
+            </select>
+
+            <label for="openaiSpeechSpeedInput">Speed (0.75 - 1.25)</label>
+            <input id="openaiSpeechSpeedInput" type="number" min="0.75" max="1.25" step="0.05" value="1" />
+          </div>
+        </div>
+
+        <div class="speech-actions">
+          <button id="applyBritishPresetButton" type="button">Apply Strong British Preset</button>
+          <button id="saveSpeechSettingsButton" type="button">Save Speech Settings</button>
+          <button id="stopSpeechButton" type="button">Stop Audio</button>
+          <span id="speechStatus" class="speech-status"></span>
+        </div>
+      </section>
+
+      <button id="resetButton" class="reset-button" type="button">
+        Reset Conversation
+      </button>
+      <button id="refreshContextButton" class="refresh-button" type="button">
+        Refresh Document Context (Next Reply)
+      </button>
+
+      <section class="admin-panel">
+        <h2>Admin - System Prompt</h2>
+        <p>Use this to refine the Captain prompt while the app is running.</p>
+        <textarea
+          id="systemPromptInput"
+          rows="8"
+          placeholder="Write new instructions to replace or append..."
+        ></textarea>
+        <div class="admin-actions">
+          <button id="refreshPromptButton" type="button">Load Current Prompt</button>
+          <button id="appendPromptButton" type="button">Append to Prompt</button>
+          <button id="replacePromptButton" type="button">Replace Prompt</button>
+        </div>
+        <div id="adminStatus" class="admin-status"></div>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>

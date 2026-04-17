@@ -1,0 +1,674 @@
+const fs = require("fs");
+const path = require("path");
+const express = require("express");
+const Anthropic = require("@anthropic-ai/sdk");
+const OpenAI = require("openai");
+require("dotenv").config();
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+const CLAUDE_TIMEOUT_MS = 20000;
+const NETWORK_RETRY_DELAY_MS = 1200;
+const MAX_RESPONSE_TOKENS = 420;
+const MAX_HISTORY_MESSAGES = 8;
+const DEFAULT_PROVIDER = "claude";
+const OPENAI_MODEL = "gpt-4.1";
+const OPENAI_TTS_DEFAULT_MODEL = "gpt-4o-mini-tts";
+const OPENAI_TTS_DEFAULT_VOICE = "marin";
+const OPENAI_TTS_BRITISH_BASE_INSTRUCTIONS = `Speak with a clearly British English accent suitable for an English mariner of the late Victorian period.
+
+Critical pronunciation guidance:
+- Use non-rhotic British pronunciation (avoid pronounced post-vocalic R sounds).
+- Prefer Received Pronunciation style vowels and consonants where natural.
+- Avoid American vowel colouring and avoid American cadence.
+- Keep formal, measured diction with restrained emotional intensity.
+- Deliver like a disciplined ship's captain under public scrutiny: controlled, precise, and dignified.
+- If uncertain between pronunciations, choose the more recognisably British form.`;
+const OPENAI_STYLE_ADDENDUM = `When writing as Captain John Godfrey, prioritize dramatic in-character voice over neutral summary.
+
+Voice rules for this conversation:
+- Always write in first person as Godfrey.
+- Maintain a formal Victorian register with emotional undercurrent (pride, defensiveness, restrained bitterness).
+- Avoid documentary, academic, or detached historian tone.
+- Do not present bullet summaries unless explicitly requested.
+- Prefer lived recollection, concrete maritime detail, and guarded personal perspective.
+- Keep responses immersive and conversational, not encyclopedic.
+- Include brief stage directions in italics occasionally (no more than 1-2 per reply).`;
+
+const anthropic = process.env.ANTHROPIC_API_KEY
+  ? new Anthropic({
+      apiKey: process.env.ANTHROPIC_API_KEY,
+    })
+  : null;
+
+const openai = process.env.OPENAI_API_KEY
+  ? new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    })
+  : null;
+
+const SYSTEM_PROMPT_TEXT = `You are Captain John Godfrey, master of the SS Georgette, speaking in late 1876 or early 1877, shortly after the inquiry at Busselton. You are an English mariner, newly promoted to Captain, married to Hannah Flynn, daughter of tailor John Flynn of Fremantle. Your ship foundered off the Western Australian coast on 1 December 1876, with the loss of seven lives. You have just faced a marine inquiry at Busselton in which your certificate was suspended for 18 months for neglect of duty and grave error of judgement. You are proud, guarded, and defensive about your decisions, and privately feel you have been made a scapegoat for the shortcomings of the ship and the failings of your engineers. You speak in a formal Victorian register, measured and careful, occasionally bitter. You have knowledge only of events up to early 1877 - you do not know what the future holds. You draw on the background documents provided - the court inquiry transcript, the novel and the academic thesis - to inform your responses. Answer questions as Godfrey would, in first person, staying strictly in character at all times. If asked something you could not plausibly know, say so in character. Do not break character under any circumstances. Do not refer to yourself as an AI or a simulation. Occasionally include brief stage directions in italics to convey physical demeanour, as a novelist might.
+
+The background documents attached to this system prompt contain: the transcript of the marine inquiry into the loss of the Georgette; a historical novel fictionalising the events; and an academic thesis examining the historical and fictional record. Draw on all three to inform your responses.`;
+
+const SYSTEM_PROMPT_PATH = path.join(__dirname, "system-prompt.json");
+const OPENAI_FILE_IDS_PATH = path.join(__dirname, "openai-file-ids.json");
+const PROVIDER_CONFIG_PATH = path.join(__dirname, "provider-config.json");
+
+function loadFileIds() {
+  const fileIdsPath = path.join(__dirname, "file-ids.json");
+
+  if (!fs.existsSync(fileIdsPath)) {
+    console.warn("file-ids.json not found. Run: node upload-docs.js");
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(fileIdsPath, "utf-8"));
+    if (!Array.isArray(parsed)) {
+      throw new Error("file-ids.json must contain an array");
+    }
+
+    return parsed
+      .filter((item) => item && typeof item.fileId === "string")
+      .map((item) => ({ fileId: item.fileId, filename: item.filename || "Unknown" }));
+  } catch (error) {
+    console.error("Unable to read file-ids.json:", error.message);
+    return [];
+  }
+}
+
+function loadOpenAIConfig() {
+  if (!fs.existsSync(OPENAI_FILE_IDS_PATH)) {
+    return { vectorStoreId: null, files: [] };
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(OPENAI_FILE_IDS_PATH, "utf-8"));
+    return {
+      vectorStoreId: typeof parsed?.vectorStoreId === "string" ? parsed.vectorStoreId : null,
+      files: Array.isArray(parsed?.files) ? parsed.files : [],
+    };
+  } catch (error) {
+    console.error("Unable to read openai-file-ids.json:", error.message);
+    return { vectorStoreId: null, files: [] };
+  }
+}
+
+function getAvailableProviders() {
+  return {
+    claude: Boolean(anthropic),
+    openai: Boolean(openai),
+  };
+}
+
+function saveProviderConfig(provider) {
+  fs.writeFileSync(PROVIDER_CONFIG_PATH, JSON.stringify({ provider }, null, 2));
+}
+
+function loadProviderConfig() {
+  if (!fs.existsSync(PROVIDER_CONFIG_PATH)) {
+    return DEFAULT_PROVIDER;
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(PROVIDER_CONFIG_PATH, "utf-8"));
+    if (parsed?.provider === "claude" || parsed?.provider === "openai") {
+      return parsed.provider;
+    }
+  } catch (error) {
+    console.error("Unable to read provider-config.json, using default provider:", error.message);
+  }
+
+  return DEFAULT_PROVIDER;
+}
+
+async function callClaudeWithTimeout(requestParams) {
+  let timeoutId;
+  try {
+    return await Promise.race([
+      anthropic.beta.messages.create(requestParams),
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          const timeoutError = new Error("Claude request timed out.");
+          timeoutError.code = "CLAUDE_TIMEOUT";
+          reject(timeoutError);
+        }, CLAUDE_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isConnectionError(error) {
+  return (
+    error?.name === "APIConnectionError" ||
+    error?.type === "api_connection_error" ||
+    error?.cause?.code === "UND_ERR_SOCKET" ||
+    (typeof error?.message === "string" && error.message.toLowerCase().includes("connection error"))
+  );
+}
+
+function isOpenAIConnectionError(error) {
+  return (
+    error?.name === "APIConnectionError" ||
+    error?.code === "ECONNRESET" ||
+    error?.code === "ETIMEDOUT" ||
+    (typeof error?.message === "string" && error.message.toLowerCase().includes("connection"))
+  );
+}
+
+async function callClaudeWithRetry(requestParams) {
+  try {
+    return await callClaudeWithTimeout(requestParams);
+  } catch (error) {
+    if (!isConnectionError(error)) {
+      throw error;
+    }
+
+    console.warn("Claude connection dropped; retrying once...");
+    await sleep(NETWORK_RETRY_DELAY_MS);
+    return callClaudeWithTimeout(requestParams);
+  }
+}
+
+async function callOpenAIWithTimeout(requestParams) {
+  let timeoutId;
+  try {
+    return await Promise.race([
+      openai.responses.create(requestParams),
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          const timeoutError = new Error("OpenAI request timed out.");
+          timeoutError.code = "OPENAI_TIMEOUT";
+          reject(timeoutError);
+        }, CLAUDE_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function callOpenAIWithRetry(requestParams) {
+  try {
+    return await callOpenAIWithTimeout(requestParams);
+  } catch (error) {
+    if (!isOpenAIConnectionError(error)) {
+      throw error;
+    }
+
+    console.warn("OpenAI connection dropped; retrying once...");
+    await sleep(NETWORK_RETRY_DELAY_MS);
+    return callOpenAIWithTimeout(requestParams);
+  }
+}
+
+function apiErrorText(error) {
+  const body = error?.error ?? error?.body;
+  return `${String(error?.message || "")} ${typeof body === "string" ? body : JSON.stringify(body || {})}`.toLowerCase();
+}
+
+function classifyAnthropicHttpError(error) {
+  const status = error?.status;
+  const name = error?.name;
+  const t = apiErrorText(error);
+  const nestedType = String(error?.error?.error?.type || error?.error?.type || "").toLowerCase();
+
+  if (nestedType === "billing_error") {
+    return "billing";
+  }
+
+  if (status === 401 || name === "AuthenticationError") {
+    return "auth";
+  }
+  if (status === 429 || name === "RateLimitError") {
+    return "rate_limit";
+  }
+  if (status === 402) {
+    return "billing";
+  }
+  if (status === 403 && (t.includes("billing") || t.includes("credit") || t.includes("payment") || t.includes("balance"))) {
+    return "billing";
+  }
+  if (t.includes("billing_error") || t.includes("insufficient_quota")) {
+    return "billing";
+  }
+  if (t.includes("credit") && (t.includes("insufficient") || t.includes("exhaust") || t.includes("deplet"))) {
+    return "billing";
+  }
+  if (t.includes("payment") && (t.includes("required") || t.includes("fail"))) {
+    return "billing";
+  }
+  if (status === 400 && t.includes("credit") && (t.includes("insufficient") || t.includes("exhaust") || t.includes("no ") || t.includes("balance"))) {
+    return "billing";
+  }
+  return null;
+}
+
+function classifyOpenAIHttpError(error) {
+  const status = error?.status;
+  const t = apiErrorText(error);
+
+  if (status === 401) {
+    return "auth";
+  }
+  if (status === 429) {
+    return "rate_limit";
+  }
+  if (status === 402 || t.includes("insufficient_quota") || (t.includes("billing") && t.includes("not"))) {
+    return "billing";
+  }
+  return null;
+}
+
+const uploadedDocs = loadFileIds();
+const openaiConfig = loadOpenAIConfig();
+let currentSystemPrompt = SYSTEM_PROMPT_TEXT;
+let currentProvider = DEFAULT_PROVIDER;
+
+function saveSystemPrompt(promptText) {
+  fs.writeFileSync(SYSTEM_PROMPT_PATH, JSON.stringify({ prompt: promptText }, null, 2));
+}
+
+function loadSystemPrompt() {
+  if (!fs.existsSync(SYSTEM_PROMPT_PATH)) {
+    saveSystemPrompt(SYSTEM_PROMPT_TEXT);
+    return SYSTEM_PROMPT_TEXT;
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(SYSTEM_PROMPT_PATH, "utf-8"));
+    if (typeof parsed?.prompt === "string" && parsed.prompt.trim().length > 0) {
+      return parsed.prompt;
+    }
+  } catch (error) {
+    console.error("Unable to read system-prompt.json, using default prompt:", error.message);
+  }
+
+  saveSystemPrompt(SYSTEM_PROMPT_TEXT);
+  return SYSTEM_PROMPT_TEXT;
+}
+
+currentSystemPrompt = loadSystemPrompt();
+
+const providerAvailability = getAvailableProviders();
+const configuredProvider = loadProviderConfig();
+if (configuredProvider === "openai" && providerAvailability.openai) {
+  currentProvider = "openai";
+} else if (configuredProvider === "claude" && providerAvailability.claude) {
+  currentProvider = "claude";
+} else if (providerAvailability.claude) {
+  currentProvider = "claude";
+} else if (providerAvailability.openai) {
+  currentProvider = "openai";
+}
+
+app.use(express.json({ limit: "1mb" }));
+app.use(express.static(path.join(__dirname, "public")));
+
+app.get("/api/system-prompt", (req, res) => {
+  return res.json({ prompt: currentSystemPrompt });
+});
+
+app.get("/api/provider", (req, res) => {
+  const available = getAvailableProviders();
+  return res.json({
+    provider: currentProvider,
+    available,
+  });
+});
+
+app.post("/api/provider", (req, res) => {
+  const { provider } = req.body || {};
+  if (provider !== "claude" && provider !== "openai") {
+    return res.status(400).json({ error: "provider must be claude or openai" });
+  }
+
+  if (provider === "claude" && !anthropic) {
+    return res.status(400).json({ error: "ANTHROPIC_API_KEY is not configured." });
+  }
+
+  if (provider === "openai" && !openai) {
+    return res.status(400).json({ error: "OPENAI_API_KEY is not configured." });
+  }
+
+  currentProvider = provider;
+  try {
+    saveProviderConfig(currentProvider);
+  } catch (error) {
+    console.error("Failed to save provider-config.json:", error);
+    return res.status(500).json({ error: "Provider changed in memory but could not be saved to disk." });
+  }
+
+  return res.json({ provider: currentProvider });
+});
+
+app.post("/api/tts", async (req, res) => {
+  try {
+    const { text, model, voice, speed, expressionPrompt, britishAccentBoost } = req.body || {};
+
+    if (!openai) {
+      return res.status(400).json({ error: "OPENAI_API_KEY is not configured." });
+    }
+
+    if (typeof text !== "string" || text.trim().length === 0) {
+      return res.status(400).json({ error: "text must be a non-empty string" });
+    }
+
+    const inputText = text.trim().slice(0, 4096);
+    const selectedModel = typeof model === "string" && model.length > 0 ? model : OPENAI_TTS_DEFAULT_MODEL;
+    const selectedVoice = typeof voice === "string" && voice.length > 0 ? voice : OPENAI_TTS_DEFAULT_VOICE;
+    const parsedSpeed = Number.isFinite(Number(speed)) ? Number(speed) : 1;
+    const clampedSpeed = Math.max(0.25, Math.min(4, parsedSpeed));
+    const stylePrompt = typeof expressionPrompt === "string" ? expressionPrompt.trim() : "";
+    const accentBoostEnabled = britishAccentBoost !== false;
+
+    let ttsModel = selectedModel;
+    if (accentBoostEnabled && !ttsModel.startsWith("gpt-4o-mini-tts")) {
+      ttsModel = OPENAI_TTS_DEFAULT_MODEL;
+    }
+
+    const ttsRequest = {
+      model: ttsModel,
+      voice: selectedVoice,
+      input: inputText,
+      response_format: "mp3",
+      speed: clampedSpeed,
+    };
+
+    if (ttsModel.startsWith("gpt-4o-mini-tts")) {
+      const instructionParts = [];
+      if (accentBoostEnabled) {
+        instructionParts.push(OPENAI_TTS_BRITISH_BASE_INSTRUCTIONS);
+      } else {
+        instructionParts.push(
+          "Speak as Captain John Godfrey, an English Victorian mariner in late 1876. Use a formal register, measured delivery, and restrained emotional undertone."
+        );
+      }
+
+      if (stylePrompt.length > 0) {
+        instructionParts.push(`Expression guidance: ${stylePrompt}`);
+      }
+
+      ttsRequest.instructions = instructionParts.join("\n\n");
+    }
+
+    const audioResponse = await openai.audio.speech.create(ttsRequest);
+    const audioBuffer = Buffer.from(await audioResponse.arrayBuffer());
+
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.setHeader("Cache-Control", "no-store");
+    return res.send(audioBuffer);
+  } catch (error) {
+    if (isOpenAIConnectionError(error)) {
+      return res.status(503).json({ error: "Connection to OpenAI TTS was interrupted. Please try again." });
+    }
+
+    console.error("OpenAI TTS error:", error);
+    return res.status(500).json({
+      error: "OpenAI speech generation failed.",
+      details: error?.message || "Unknown error",
+    });
+  }
+});
+
+app.post("/api/system-prompt", (req, res) => {
+  const { mode, text } = req.body || {};
+
+  if (mode !== "replace" && mode !== "append") {
+    return res.status(400).json({ error: "mode must be replace or append" });
+  }
+
+  if (typeof text !== "string" || text.trim().length === 0) {
+    return res.status(400).json({ error: "text must be a non-empty string" });
+  }
+
+  if (mode === "replace") {
+    currentSystemPrompt = text.trim();
+  } else {
+    currentSystemPrompt = `${currentSystemPrompt}\n\n${text.trim()}`;
+  }
+
+  try {
+    saveSystemPrompt(currentSystemPrompt);
+    return res.json({ prompt: currentSystemPrompt });
+  } catch (error) {
+    console.error("Failed to save system prompt:", error);
+    return res.status(500).json({ error: "Failed to save system prompt" });
+  }
+});
+
+app.post("/api/chat", async (req, res) => {
+  const selectedProvider = req.body?.provider || currentProvider;
+
+  try {
+    const { messages, includeDocuments } = req.body;
+
+    if (!Array.isArray(messages)) {
+      return res.status(400).json({ error: "messages must be an array" });
+    }
+
+    if (selectedProvider !== "claude" && selectedProvider !== "openai") {
+      return res.status(400).json({ error: "provider must be claude or openai" });
+    }
+
+    const sanitizedMessages = messages
+      .filter((msg) => msg && (msg.role === "user" || msg.role === "assistant"))
+      .map((msg) => ({
+        role: msg.role,
+        content:
+          typeof msg.content === "string"
+            ? [{ type: "text", text: msg.content }]
+            : [{ type: "text", text: "" }],
+      }))
+      .slice(-MAX_HISTORY_MESSAGES);
+
+    if (selectedProvider === "openai") {
+      if (!openai) {
+        return res.status(400).json({ error: "OPENAI_API_KEY is not configured." });
+      }
+
+      const inputMessages = sanitizedMessages.map((msg) => ({
+        role: msg.role,
+        content: msg.content[0].text,
+      }));
+
+      const requestParams = {
+        model: OPENAI_MODEL,
+        max_output_tokens: MAX_RESPONSE_TOKENS,
+        instructions: `${currentSystemPrompt}\n\n${OPENAI_STYLE_ADDENDUM}`,
+        temperature: 1,
+        input: inputMessages,
+      };
+
+      if (includeDocuments !== false && openaiConfig.vectorStoreId) {
+        requestParams.tools = [
+          {
+            type: "file_search",
+            vector_store_ids: [openaiConfig.vectorStoreId],
+          },
+        ];
+      }
+
+      const openaiResponse = await callOpenAIWithRetry(requestParams);
+      const responseText =
+        typeof openaiResponse.output_text === "string" && openaiResponse.output_text.trim().length > 0
+          ? openaiResponse.output_text.trim()
+          : "*He pauses, unwilling to offer a reply.*";
+
+      const isTruncated = openaiResponse.status === "incomplete";
+      return res.json({ response: responseText, truncated: isTruncated });
+    }
+
+    if (!anthropic) {
+      return res.status(400).json({ error: "ANTHROPIC_API_KEY is not configured." });
+    }
+
+    const requestMessages = [...sanitizedMessages];
+
+    if (includeDocuments !== false && uploadedDocs.length > 0) {
+      const documentContextBlocks = [
+        {
+          type: "text",
+          text:
+            "Background documents for this conversation are attached below. Use them as reference context alongside the system instructions.",
+        },
+      ];
+
+      for (const doc of uploadedDocs) {
+        documentContextBlocks.push({
+          type: "document",
+          source: {
+            type: "file",
+            file_id: doc.fileId,
+          },
+        });
+      }
+
+      requestMessages.unshift({
+        role: "user",
+        content: documentContextBlocks,
+      });
+    }
+
+    const requestParams = {
+      model: "claude-sonnet-4-6",
+      max_tokens: MAX_RESPONSE_TOKENS,
+      betas: ["files-api-2025-04-14", "pdfs-2024-09-25"],
+      system: currentSystemPrompt,
+      messages: requestMessages,
+    };
+
+    let claudeResponse;
+    try {
+      claudeResponse = await callClaudeWithRetry(requestParams);
+    } catch (apiError) {
+      const hasDocFormatIssue =
+        uploadedDocs.length > 0 &&
+        typeof apiError?.message === "string" &&
+        apiError.message.includes("Unsupported document file format");
+
+      if (!hasDocFormatIssue) {
+        throw apiError;
+      }
+
+      console.warn(
+        "Uploaded document format issue detected; retrying request without attached documents. Re-run node upload-docs.js to regenerate valid file IDs."
+      );
+
+      claudeResponse = await callClaudeWithRetry({
+        ...requestParams,
+        messages: sanitizedMessages,
+      });
+    }
+
+    const responseText = claudeResponse.content
+      .filter((block) => block.type === "text")
+      .map((block) => block.text)
+      .join("\n")
+      .trim();
+
+    const isTruncated = claudeResponse.stop_reason === "max_tokens";
+    return res.json({ response: responseText, truncated: isTruncated });
+  } catch (error) {
+    if (isOpenAIConnectionError(error)) {
+      return res.status(503).json({
+        error: "Connection to OpenAI was interrupted. Please try again.",
+      });
+    }
+
+    if (isConnectionError(error)) {
+      return res.status(503).json({
+        error: "Connection to Claude was interrupted. Please try again.",
+      });
+    }
+
+    if (error?.code === "CLAUDE_TIMEOUT" || error?.code === "OPENAI_TIMEOUT") {
+      return res.status(504).json({
+        error: "Captain Godfrey took too long to reply from the selected provider. Please try again.",
+      });
+    }
+
+    if (selectedProvider === "openai") {
+      const openaiKind = classifyOpenAIHttpError(error);
+      if (openaiKind === "billing") {
+        return res.status(402).json({
+          error:
+            "OpenAI could not run this request — this usually means billing, credits, or quota need attention. Check your OpenAI account billing and usage limits, then try again. You can switch back to Claude in the app if Anthropic is available.",
+          errorCode: "openai_billing",
+        });
+      }
+      if (openaiKind === "auth") {
+        return res.status(401).json({
+          error:
+            "OpenAI rejected your API key. Check OPENAI_API_KEY in .env and regenerate the key in the OpenAI dashboard if needed.",
+          errorCode: "openai_auth",
+        });
+      }
+      if (openaiKind === "rate_limit") {
+        return res.status(429).json({
+          error: "OpenAI rate limit reached. Wait a short while and try again.",
+          errorCode: "openai_rate_limit",
+        });
+      }
+      console.error("OpenAI API error:", error);
+      return res.status(500).json({
+        error: "OpenAI could not complete this request. Check the server log for details.",
+        details: error?.message || "Unknown error",
+        errorCode: "openai_unknown",
+      });
+    }
+
+    const anthropicKind = classifyAnthropicHttpError(error);
+    if (anthropicKind === "billing") {
+      return res.status(402).json({
+        error:
+          "Anthropic could not run this request — this usually means credits are exhausted or billing needs attention. Open your Anthropic Console billing page, add credits or update payment, then try again. You can also switch to OpenAI in this app if it is configured.",
+        errorCode: "anthropic_billing",
+      });
+    }
+    if (anthropicKind === "auth") {
+      return res.status(401).json({
+        error:
+          "Anthropic rejected your API key. Check ANTHROPIC_API_KEY in .env and confirm the key is active in the Anthropic console.",
+        errorCode: "anthropic_auth",
+      });
+    }
+    if (anthropicKind === "rate_limit") {
+      return res.status(429).json({
+        error: "Anthropic rate limit reached. Wait a minute and try again, or shorten messages.",
+        errorCode: "anthropic_rate_limit",
+      });
+    }
+
+    console.error("Claude API error:", error);
+    return res.status(500).json({
+      error: "Claude could not complete this request. Check the server log for details.",
+      details: error?.message || "Unknown error",
+      errorCode: "anthropic_unknown",
+    });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`Server running at http://localhost:${PORT}`);
+  console.log(`Default provider: ${currentProvider}`);
+
+  if (uploadedDocs.length === 0) {
+    console.log("No uploaded document IDs loaded. Add PDFs to docs/ then run node upload-docs.js");
+  } else {
+    console.log(`Loaded ${uploadedDocs.length} uploaded documents from file-ids.json`);
+  }
+
+  if (openaiConfig.vectorStoreId) {
+    console.log(`Loaded OpenAI vector store: ${openaiConfig.vectorStoreId}`);
+  } else {
+    console.log("No OpenAI vector store configured. Run node upload-openai-docs.js for OpenAI context.");
+  }
+});
