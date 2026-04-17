@@ -1,12 +1,23 @@
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const express = require("express");
+const session = require("express-session");
 const Anthropic = require("@anthropic-ai/sdk");
 const OpenAI = require("openai");
 require("dotenv").config();
 
 const app = express();
+app.set("trust proxy", 1);
 const PORT = process.env.PORT || 3000;
+const LOGS_DIR = path.join(__dirname, "logs");
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
+const SESSION_SECRET =
+  process.env.ADMIN_SESSION_SECRET || process.env.SESSION_SECRET || "dev-insecure-change-admin-session-secret";
+
+if (!fs.existsSync(LOGS_DIR)) {
+  fs.mkdirSync(LOGS_DIR, { recursive: true });
+}
 const CLAUDE_TIMEOUT_MS = 20000;
 const NETWORK_RETRY_DELAY_MS = 1200;
 const MAX_RESPONSE_TOKENS = 420;
@@ -297,6 +308,108 @@ function loadSystemPrompt() {
 
 currentSystemPrompt = loadSystemPrompt();
 
+const LOG_FILENAME_RE = /^session-[0-9TZa-z.-]+-[a-f0-9]{16}\.json$/;
+
+function getClientIp(req) {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded.trim()) {
+    return forwarded.split(",")[0].trim();
+  }
+  return req.ip || req.socket?.remoteAddress || null;
+}
+
+function isValidLogFilename(name) {
+  return typeof name === "string" && LOG_FILENAME_RE.test(name) && name === path.basename(name);
+}
+
+function resolveSafeLogPath(filename) {
+  if (!isValidLogFilename(filename)) {
+    return null;
+  }
+  const full = path.join(LOGS_DIR, filename);
+  const resolved = path.resolve(full);
+  if (!resolved.startsWith(path.resolve(LOGS_DIR))) {
+    return null;
+  }
+  return resolved;
+}
+
+function createLogSession(clientIp) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const id = crypto.randomBytes(8).toString("hex");
+  const filename = `session-${stamp}-${id}.json`;
+  const filePath = path.join(LOGS_DIR, filename);
+  const payload = {
+    createdAt: new Date().toISOString(),
+    clientIp: clientIp || null,
+    exchanges: [],
+  };
+  fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), "utf-8");
+  return filename;
+}
+
+function appendExchange(filename, userText, assistantText) {
+  const full = resolveSafeLogPath(filename);
+  if (!full || !fs.existsSync(full)) {
+    return false;
+  }
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(full, "utf-8"));
+  } catch {
+    return false;
+  }
+  if (!Array.isArray(data.exchanges)) {
+    data.exchanges = [];
+  }
+  data.exchanges.push({
+    at: new Date().toISOString(),
+    user: typeof userText === "string" ? userText : "",
+    assistant: typeof assistantText === "string" ? assistantText : "",
+  });
+  fs.writeFileSync(full, JSON.stringify(data, null, 2), "utf-8");
+  return true;
+}
+
+function getLastUserText(sanitizedMessages) {
+  for (let i = sanitizedMessages.length - 1; i >= 0; i -= 1) {
+    if (sanitizedMessages[i].role === "user") {
+      const text = sanitizedMessages[i].content?.[0]?.text;
+      return typeof text === "string" ? text : "";
+    }
+  }
+  return "";
+}
+
+function writeChatExchangeLog(req, sanitizedMessages, incomingLogId, responseText) {
+  const userText = getLastUserText(sanitizedMessages);
+  const ip = getClientIp(req);
+  let file = typeof incomingLogId === "string" ? incomingLogId : null;
+  if (!file || !resolveSafeLogPath(file) || !fs.existsSync(resolveSafeLogPath(file))) {
+    file = createLogSession(ip);
+  } else {
+    const full = resolveSafeLogPath(file);
+    try {
+      const raw = JSON.parse(fs.readFileSync(full, "utf-8"));
+      if (raw && (raw.clientIp == null || raw.clientIp === "") && ip) {
+        raw.clientIp = ip;
+        fs.writeFileSync(full, JSON.stringify(raw, null, 2), "utf-8");
+      }
+    } catch {
+      /* leave file unchanged */
+    }
+  }
+  appendExchange(file, userText, responseText);
+  return file;
+}
+
+function requireAdmin(req, res, next) {
+  if (req.session && req.session.admin === true) {
+    return next();
+  }
+  return res.status(401).json({ error: "Unauthorized" });
+}
+
 const providerAvailability = getAvailableProviders();
 const configuredProvider = loadProviderConfig();
 if (configuredProvider === "openai" && providerAvailability.openai) {
@@ -310,9 +423,79 @@ if (configuredProvider === "openai" && providerAvailability.openai) {
 }
 
 app.use(express.json({ limit: "1mb" }));
+app.use(
+  session({
+    name: "godfrey.admin.sid",
+    secret: SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    },
+  })
+);
 app.use(express.static(path.join(__dirname, "public")));
 
-app.get("/api/system-prompt", (req, res) => {
+app.post("/api/admin/login", (req, res) => {
+  if (!ADMIN_PASSWORD) {
+    return res.status(503).json({ error: "ADMIN_PASSWORD is not set in the server environment." });
+  }
+  const password = req.body?.password;
+  if (typeof password !== "string" || password !== ADMIN_PASSWORD) {
+    return res.status(401).json({ error: "Invalid password." });
+  }
+  req.session.admin = true;
+  return res.json({ ok: true });
+});
+
+app.post("/api/admin/logout", (req, res) => {
+  req.session.destroy(() => {
+    res.json({ ok: true });
+  });
+});
+
+app.get("/api/admin/me", (req, res) => {
+  return res.json({ admin: Boolean(req.session && req.session.admin) });
+});
+
+app.get("/api/admin/logs", requireAdmin, (req, res) => {
+  try {
+    const names = fs.readdirSync(LOGS_DIR).filter((f) => isValidLogFilename(f));
+    const entries = names
+      .map((name) => {
+        const st = fs.statSync(path.join(LOGS_DIR, name));
+        return { name, mtime: st.mtimeMs };
+      })
+      .sort((a, b) => b.mtime - a.mtime);
+    return res.json({ logs: entries });
+  } catch (error) {
+    console.error("List logs error:", error);
+    return res.status(500).json({ error: "Could not list session logs." });
+  }
+});
+
+app.get("/api/admin/logs/:name", requireAdmin, (req, res) => {
+  const full = resolveSafeLogPath(req.params.name);
+  if (!full) {
+    return res.status(400).json({ error: "Invalid log filename." });
+  }
+  try {
+    if (!fs.existsSync(full)) {
+      return res.status(404).json({ error: "Log not found." });
+    }
+    const raw = fs.readFileSync(full, "utf-8");
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    return res.send(raw);
+  } catch (error) {
+    console.error("Read log error:", error);
+    return res.status(500).json({ error: "Could not read log file." });
+  }
+});
+
+app.get("/api/system-prompt", requireAdmin, (req, res) => {
   return res.json({ prompt: currentSystemPrompt });
 });
 
@@ -324,7 +507,7 @@ app.get("/api/provider", (req, res) => {
   });
 });
 
-app.post("/api/provider", (req, res) => {
+app.post("/api/provider", requireAdmin, (req, res) => {
   const { provider } = req.body || {};
   if (provider !== "claude" && provider !== "openai") {
     return res.status(400).json({ error: "provider must be claude or openai" });
@@ -418,7 +601,7 @@ app.post("/api/tts", async (req, res) => {
   }
 });
 
-app.post("/api/system-prompt", (req, res) => {
+app.post("/api/system-prompt", requireAdmin, (req, res) => {
   const { mode, text } = req.body || {};
 
   if (mode !== "replace" && mode !== "append") {
@@ -445,10 +628,10 @@ app.post("/api/system-prompt", (req, res) => {
 });
 
 app.post("/api/chat", async (req, res) => {
-  const selectedProvider = req.body?.provider || currentProvider;
+  const selectedProvider = currentProvider;
 
   try {
-    const { messages, includeDocuments } = req.body;
+    const { messages, includeDocuments, logSessionId: incomingLogId } = req.body;
 
     if (!Array.isArray(messages)) {
       return res.status(400).json({ error: "messages must be an array" });
@@ -503,7 +686,13 @@ app.post("/api/chat", async (req, res) => {
           : "*He pauses, unwilling to offer a reply.*";
 
       const isTruncated = openaiResponse.status === "incomplete";
-      return res.json({ response: responseText, truncated: isTruncated });
+      let activeLogFile = null;
+      try {
+        activeLogFile = writeChatExchangeLog(req, sanitizedMessages, incomingLogId, responseText);
+      } catch (logErr) {
+        console.error("Session log write failed:", logErr);
+      }
+      return res.json({ response: responseText, truncated: isTruncated, logSessionId: activeLogFile });
     }
 
     if (!anthropic) {
@@ -575,7 +764,13 @@ app.post("/api/chat", async (req, res) => {
       .trim();
 
     const isTruncated = claudeResponse.stop_reason === "max_tokens";
-    return res.json({ response: responseText, truncated: isTruncated });
+    let activeLogFile = null;
+    try {
+      activeLogFile = writeChatExchangeLog(req, sanitizedMessages, incomingLogId, responseText);
+    } catch (logErr) {
+      console.error("Session log write failed:", logErr);
+    }
+    return res.json({ response: responseText, truncated: isTruncated, logSessionId: activeLogFile });
   } catch (error) {
     if (isOpenAIConnectionError(error)) {
       return res.status(503).json({

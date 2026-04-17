@@ -121,6 +121,93 @@ body {
   visibility: hidden;
 }
 
+.admin-only-hidden {
+  display: none !important;
+}
+
+.hidden-block {
+  display: none !important;
+}
+
+.log-viewer-panel {
+  border-top: 1px solid var(--panel-border);
+  margin-top: 0.35rem;
+  padding-top: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.log-viewer-panel h2 {
+  margin: 0;
+  color: var(--accent);
+}
+
+.log-viewer-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.log-viewer-toolbar select {
+  flex: 1;
+  min-width: 200px;
+  border: 1px solid var(--panel-border);
+  border-radius: 7px;
+  background: #0f2133;
+  color: var(--text-main);
+  padding: 0.45rem 0.55rem;
+}
+
+#logViewerContent {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 0.65rem 0.75rem;
+  background: #0a1826;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.admin-auth-panel {
+  border-top: 1px solid var(--panel-border);
+  margin-top: 0.35rem;
+  padding-top: 0.8rem;
+}
+
+.admin-auth-panel h2 {
+  margin: 0 0 0.5rem;
+  color: var(--accent);
+  font-size: 1.05rem;
+}
+
+.admin-auth-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+#adminPasswordInput {
+  flex: 1;
+  min-width: 180px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: #0f2133;
+  color: var(--text-main);
+  padding: 0.55rem 0.65rem;
+}
+
+#adminAuthStatus {
+  font-size: 0.88rem;
+  color: var(--text-muted);
+}
+
 .chat-form {
   display: flex;
   gap: 0.65rem;

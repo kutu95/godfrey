@@ -29,8 +29,21 @@ const saveSpeechSettingsButton = document.getElementById("saveSpeechSettingsButt
 const applyBritishPresetButton = document.getElementById("applyBritishPresetButton");
 const stopSpeechButton = document.getElementById("stopSpeechButton");
 const speechStatus = document.getElementById("speechStatus");
+const adminPasswordInput = document.getElementById("adminPasswordInput");
+const adminLoginButton = document.getElementById("adminLoginButton");
+const adminLogoutButton = document.getElementById("adminLogoutButton");
+const adminAuthStatus = document.getElementById("adminAuthStatus");
+const adminLoginBlock = document.getElementById("adminLoginBlock");
+const adminSignedInBlock = document.getElementById("adminSignedInBlock");
+const refreshLogsButton = document.getElementById("refreshLogsButton");
+const logFileSelect = document.getElementById("logFileSelect");
+const logViewerContent = document.getElementById("logViewerContent");
+
+const fetchOpts = { credentials: "include" };
 
 let conversation = [];
+let isAdmin = false;
+let logSessionId = null;
 let isSending = false;
 const CHAT_TIMEOUT_MS = 20000;
 let includeDocumentsNextTurn = true;
@@ -88,6 +101,125 @@ function setProviderStatus(message, isError = false) {
 function setAdminStatus(message, isError = false) {
   adminStatus.textContent = message;
   adminStatus.style.color = isError ? "#e3a0a0" : "";
+}
+
+function setAdminAuthStatus(message, isError = false) {
+  adminAuthStatus.textContent = message;
+  adminAuthStatus.style.color = isError ? "#e3a0a0" : "";
+}
+
+function applyAdminGating() {
+  document.querySelectorAll("[data-admin-only]").forEach((el) => {
+    el.classList.toggle("admin-only-hidden", !isAdmin);
+  });
+  adminLoginBlock.classList.toggle("hidden-block", isAdmin);
+  adminSignedInBlock.classList.toggle("hidden-block", !isAdmin);
+}
+
+async function checkAdminSession() {
+  try {
+    const response = await fetch("/api/admin/me", fetchOpts);
+    const data = await response.json();
+    isAdmin = Boolean(data.admin);
+  } catch {
+    isAdmin = false;
+  }
+  applyAdminGating();
+  if (isAdmin) {
+    loadSystemPrompt();
+    refreshLogFileList();
+  }
+}
+
+async function adminLogin() {
+  const password = adminPasswordInput.value;
+  if (!password) {
+    setAdminAuthStatus("Enter the admin password.", true);
+    return;
+  }
+  try {
+    const response = await fetch("/api/admin/login", {
+      ...fetchOpts,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Sign-in failed.");
+    }
+    adminPasswordInput.value = "";
+    setAdminAuthStatus("Signed in.");
+    isAdmin = true;
+    applyAdminGating();
+    loadSystemPrompt();
+    refreshLogFileList();
+  } catch (error) {
+    setAdminAuthStatus(error.message || "Sign-in failed.", true);
+  }
+}
+
+async function adminLogout() {
+  try {
+    await fetch("/api/admin/logout", { ...fetchOpts, method: "POST" });
+  } catch {
+    /* ignore */
+  }
+  isAdmin = false;
+  logViewerContent.textContent = "Select a log file to view JSON contents.";
+  logFileSelect.innerHTML = '<option value="">— Select a log file —</option>';
+  applyAdminGating();
+  setAdminAuthStatus("Signed out.");
+}
+
+async function refreshLogFileList() {
+  if (!isAdmin) return;
+  try {
+    const response = await fetch("/api/admin/logs", fetchOpts);
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Could not list logs.");
+    }
+    const logs = Array.isArray(data.logs) ? data.logs : [];
+    const selected = logFileSelect.value;
+    logFileSelect.innerHTML = '<option value="">— Select a log file —</option>';
+    for (const entry of logs) {
+      const opt = document.createElement("option");
+      opt.value = entry.name;
+      opt.textContent = entry.name;
+      logFileSelect.appendChild(opt);
+    }
+    if (selected && [...logFileSelect.options].some((o) => o.value === selected)) {
+      logFileSelect.value = selected;
+    }
+  } catch (error) {
+    logViewerContent.textContent = error.message || "Failed to load log list.";
+  }
+}
+
+async function loadSelectedLogFile() {
+  const name = logFileSelect.value;
+  if (!name) {
+    logViewerContent.textContent = "Select a log file to view JSON contents.";
+    return;
+  }
+  try {
+    const response = await fetch(`/api/admin/logs/${encodeURIComponent(name)}`, fetchOpts);
+    const text = await response.text();
+    if (!response.ok) {
+      let err = text;
+      try {
+        err = JSON.parse(text).error || err;
+      } catch {
+        /* use raw */
+      }
+      throw new Error(err);
+    }
+    const parsed = JSON.parse(text);
+    logViewerContent.textContent = JSON.stringify(parsed, null, 2);
+  } catch (error) {
+    logViewerContent.textContent = error.message || "Could not read log.";
+  }
 }
 
 function setSpeechStatus(message, isError = false) {
@@ -249,6 +381,7 @@ async function speakWithOpenAI(text) {
     setSpeechStatus("Generating OpenAI speech...");
 
     const response = await fetch("/api/tts", {
+      ...fetchOpts,
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -291,6 +424,7 @@ async function speakWithOpenAI(text) {
 }
 
 function speakAssistantReply(text) {
+  if (!isAdmin) return;
   const cleaned = sanitizeTextForSpeech(text);
   if (!cleaned) return;
 
@@ -326,7 +460,7 @@ function applyStrongBritishPreset() {
 
 async function loadProvider() {
   try {
-    const response = await fetch("/api/provider");
+    const response = await fetch("/api/provider", fetchOpts);
     const data = await response.json();
     if (!response.ok) {
       throw new Error(data.error || "Failed to load provider");
@@ -344,6 +478,7 @@ async function saveProvider() {
   const selected = providerSelect.value;
   try {
     const response = await fetch("/api/provider", {
+      ...fetchOpts,
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -366,7 +501,7 @@ async function saveProvider() {
 
 async function loadSystemPrompt() {
   try {
-    const response = await fetch("/api/system-prompt");
+    const response = await fetch("/api/system-prompt", fetchOpts);
     const data = await response.json();
 
     if (!response.ok) {
@@ -389,6 +524,7 @@ async function updateSystemPrompt(mode) {
 
   try {
     const response = await fetch("/api/system-prompt", {
+      ...fetchOpts,
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -425,6 +561,7 @@ async function sendMessage(content) {
 
   try {
     const response = await fetch("/api/chat", {
+      ...fetchOpts,
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -432,7 +569,7 @@ async function sendMessage(content) {
       body: JSON.stringify({
         messages: conversation,
         includeDocuments: shouldIncludeDocuments,
-        provider: currentProvider,
+        logSessionId,
       }),
       signal: controller.signal,
     });
@@ -453,6 +590,9 @@ async function sendMessage(content) {
     }
     conversation.push({ role: "assistant", content: captainReply });
     appendMessage("assistant", captainReply);
+    if (typeof data.logSessionId === "string" && data.logSessionId) {
+      logSessionId = data.logSessionId;
+    }
     speakAssistantReply(captainReply);
   } catch (error) {
     if (error.name === "AbortError") {
@@ -529,6 +669,7 @@ resetButton.addEventListener("click", () => {
   conversation = [];
   chatWindow.innerHTML = "";
   includeDocumentsNextTurn = true;
+  logSessionId = null;
   stopSpeechPlayback();
   setTyping(false);
 });
@@ -621,4 +762,27 @@ loadSpeechSettings();
 applySpeechSettingsToInputs();
 updateSpeechPanelVisibility();
 loadProvider();
-loadSystemPrompt();
+checkAdminSession();
+
+adminLoginButton.addEventListener("click", () => {
+  adminLogin();
+});
+
+adminLogoutButton.addEventListener("click", () => {
+  adminLogout();
+});
+
+adminPasswordInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    adminLogin();
+  }
+});
+
+refreshLogsButton.addEventListener("click", () => {
+  refreshLogFileList();
+});
+
+logFileSelect.addEventListener("change", () => {
+  loadSelectedLogFile();
+});

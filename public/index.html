@@ -11,7 +11,7 @@
       <header class="app-header">
         <h1>Captain John Godfrey — Master, SS Georgette, 1876</h1>
         <p>Converse with the Captain in the aftermath of the Georgette inquiry.</p>
-        <div class="provider-controls">
+        <div data-admin-only class="provider-controls admin-only-hidden">
           <label for="providerSelect">Response provider:</label>
           <select id="providerSelect">
             <option value="claude">Claude (Anthropic)</option>
@@ -40,7 +40,25 @@
         <button type="submit">Send</button>
       </form>
 
-      <section class="speech-panel">
+      <section class="admin-auth-panel" aria-label="Administrator sign-in">
+        <h2>Administrator</h2>
+        <div id="adminLoginBlock" class="admin-auth-row">
+          <input
+            id="adminPasswordInput"
+            type="password"
+            autocomplete="current-password"
+            placeholder="Admin password"
+          />
+          <button id="adminLoginButton" type="button">Sign in</button>
+          <span id="adminAuthStatus"></span>
+        </div>
+        <div id="adminSignedInBlock" class="admin-auth-row hidden-block">
+          <span id="adminSignedInLabel">Signed in as administrator.</span>
+          <button id="adminLogoutButton" type="button">Sign out</button>
+        </div>
+      </section>
+
+      <section data-admin-only class="speech-panel admin-only-hidden">
         <h2>Speech Settings</h2>
         <div class="speech-grid">
           <label for="speechModeSelect">Speech mode</label>
@@ -122,7 +140,7 @@
         Refresh Document Context (Next Reply)
       </button>
 
-      <section class="admin-panel">
+      <section data-admin-only class="admin-panel admin-only-hidden">
         <h2>Admin - System Prompt</h2>
         <p>Use this to refine the Captain prompt while the app is running.</p>
         <textarea
@@ -136,6 +154,17 @@
           <button id="replacePromptButton" type="button">Replace Prompt</button>
         </div>
         <div id="adminStatus" class="admin-status"></div>
+      </section>
+
+      <section data-admin-only class="log-viewer-panel admin-only-hidden" aria-label="Session logs">
+        <h2>Session logs</h2>
+        <div class="log-viewer-toolbar">
+          <button id="refreshLogsButton" type="button">Refresh list</button>
+          <select id="logFileSelect" aria-label="Select log file">
+            <option value="">— Select a log file —</option>
+          </select>
+        </div>
+        <pre id="logViewerContent">Select a log file to view JSON contents.</pre>
       </section>
     </main>
 
