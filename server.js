@@ -318,6 +318,35 @@ function getClientIp(req) {
   return req.ip || req.socket?.remoteAddress || null;
 }
 
+/** Western Australia (no DST). All session log timestamps use this zone, not UTC. */
+const LOG_TIMEZONE = "Australia/Perth";
+const PERTH_UTC_OFFSET_LABEL = "+08:00";
+
+function perthWallClockParts(date = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: LOG_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+}
+
+function formatLogPerthTimestamp(date = new Date()) {
+  const parts = perthWallClockParts(date);
+  const g = (t) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${g("year")}-${g("month")}-${g("day")}T${g("hour")}:${g("minute")}:${g("second")} ${PERTH_UTC_OFFSET_LABEL} ${LOG_TIMEZONE}`;
+}
+
+function perthFilenameStamp(date = new Date()) {
+  const parts = perthWallClockParts(date);
+  const g = (t) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${g("year")}-${g("month")}-${g("day")}T${g("hour")}-${g("minute")}-${g("second")}`;
+}
+
 function isValidLogFilename(name) {
   return typeof name === "string" && LOG_FILENAME_RE.test(name) && name === path.basename(name);
 }
@@ -335,12 +364,13 @@ function resolveSafeLogPath(filename) {
 }
 
 function createLogSession(clientIp) {
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const stamp = perthFilenameStamp().replace(/[:.]/g, "-");
   const id = crypto.randomBytes(8).toString("hex");
   const filename = `session-${stamp}-${id}.json`;
   const filePath = path.join(LOGS_DIR, filename);
   const payload = {
-    createdAt: new Date().toISOString(),
+    createdAt: formatLogPerthTimestamp(),
+    timeZone: LOG_TIMEZONE,
     clientIp: clientIp || null,
     exchanges: [],
   };
@@ -348,7 +378,7 @@ function createLogSession(clientIp) {
   return filename;
 }
 
-function appendExchange(filename, userText, assistantText) {
+function appendExchange(filename, userText, assistantText, clientIp) {
   const full = resolveSafeLogPath(filename);
   if (!full || !fs.existsSync(full)) {
     return false;
@@ -363,7 +393,8 @@ function appendExchange(filename, userText, assistantText) {
     data.exchanges = [];
   }
   data.exchanges.push({
-    at: new Date().toISOString(),
+    at: formatLogPerthTimestamp(),
+    clientIp: clientIp || null,
     user: typeof userText === "string" ? userText : "",
     assistant: typeof assistantText === "string" ? assistantText : "",
   });
@@ -399,7 +430,7 @@ function writeChatExchangeLog(req, sanitizedMessages, incomingLogId, responseTex
       /* leave file unchanged */
     }
   }
-  appendExchange(file, userText, responseText);
+  appendExchange(file, userText, responseText, ip);
   return file;
 }
 

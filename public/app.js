@@ -46,6 +46,21 @@ let isAdmin = false;
 let logSessionId = null;
 let isSending = false;
 const CHAT_TIMEOUT_MS = 20000;
+/** Milliseconds of quiet after the Captain's last reply before a single in-character nudge (display only). */
+const IDLE_NUDGE_MS = 120000;
+let idleNudgeTimer = null;
+/** True after we've shown an idle nudge for this user turn; reset when the user sends another message. */
+let nudgedSinceLastUserTurn = false;
+
+const IDLE_NUDGE_LINES = [
+  "*He taps the table lightly.* What would you have me speak to next?",
+  "*He narrows his eyes, curious.* Are you yourself a mariner, or come to this tale by some other road?",
+  "*He exhales.* Do you think it fair that I have been made a scapegoat for what befell the Georgette?",
+  "*He leans forward slightly.* Is it the inquiry you wish to pursue, or the wreck itself?",
+  "*He studies your silence.* Have I said aught that sits ill with you?",
+  "*He folds his arms.* Shall I speak plain of the engineers, or hold my tongue for the moment?",
+];
+
 let includeDocumentsNextTurn = true;
 let currentProvider = "claude";
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -81,6 +96,46 @@ function appendMessage(role, content) {
   message.textContent = content;
   chatWindow.appendChild(message);
   chatWindow.scrollTop = chatWindow.scrollHeight;
+}
+
+function clearIdleNudgeTimer() {
+  if (idleNudgeTimer) {
+    clearTimeout(idleNudgeTimer);
+    idleNudgeTimer = null;
+  }
+}
+
+function scheduleIdleNudge() {
+  clearIdleNudgeTimer();
+  const last = conversation[conversation.length - 1];
+  if (!last || last.role !== "assistant" || nudgedSinceLastUserTurn) {
+    return;
+  }
+  idleNudgeTimer = setTimeout(() => {
+    idleNudgeTimer = null;
+    if (document.hidden || isSending || nudgedSinceLastUserTurn) {
+      return;
+    }
+    const lastAgain = conversation[conversation.length - 1];
+    if (!lastAgain || lastAgain.role !== "assistant") {
+      return;
+    }
+    const line = IDLE_NUDGE_LINES[Math.floor(Math.random() * IDLE_NUDGE_LINES.length)];
+    appendMessage("assistant", line);
+    speakAssistantReply(line);
+    nudgedSinceLastUserTurn = true;
+  }, IDLE_NUDGE_MS);
+}
+
+function bumpIdleNudgeAfterUserActivity() {
+  clearIdleNudgeTimer();
+  if (nudgedSinceLastUserTurn) {
+    return;
+  }
+  const last = conversation[conversation.length - 1];
+  if (last && last.role === "assistant") {
+    scheduleIdleNudge();
+  }
 }
 
 function setTyping(isTyping) {
@@ -546,6 +601,8 @@ async function updateSystemPrompt(mode) {
 
 async function sendMessage(content) {
   if (isSending) return;
+  clearIdleNudgeTimer();
+  nudgedSinceLastUserTurn = false;
   isSending = true;
   conversation.push({ role: "user", content });
   appendMessage("user", content);
@@ -594,6 +651,7 @@ async function sendMessage(content) {
       logSessionId = data.logSessionId;
     }
     speakAssistantReply(captainReply);
+    scheduleIdleNudge();
   } catch (error) {
     if (error.name === "AbortError") {
       appendMessage(
@@ -665,7 +723,13 @@ messageInput.addEventListener("keydown", async (event) => {
   }
 });
 
+messageInput.addEventListener("input", () => {
+  bumpIdleNudgeAfterUserActivity();
+});
+
 resetButton.addEventListener("click", () => {
+  clearIdleNudgeTimer();
+  nudgedSinceLastUserTurn = false;
   conversation = [];
   chatWindow.innerHTML = "";
   includeDocumentsNextTurn = true;
