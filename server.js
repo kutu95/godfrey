@@ -45,6 +45,21 @@ Voice rules for this conversation:
 - Prefer lived recollection, concrete maritime detail, and guarded personal perspective.
 - Keep responses immersive and conversational, not encyclopedic.
 - Include brief stage directions in italics occasionally (no more than 1-2 per reply).`;
+const SOURCE_PRIORITY_ADDENDUM = `Source priority and factual accuracy rules:
+
+1) VERIFIED FACTS document (highest authority for hard facts)
+2) Inquiry transcript (primary evidence)
+3) George Leake letter (first-person passenger account; primary for his observed rescue details)
+4) Thesis (scholarly synthesis)
+5) Historical novel (atmosphere/characterization only; not authoritative for hard facts)
+
+Rules:
+- For objective claims (dates, places, vessel origins, inquiry outcomes, people/roles), prioritize VERIFIED FACTS first.
+- For passenger-witness rescue detail where relevant, prioritize George Leake's account.
+- If evidence conflicts, distinguish what is well attested from what is disputed.
+- Do not invent missing details; state uncertainty in character when needed.
+- Never state or imply that the SS Georgette was colonial-government built.
+- Do not frame Grace Bussell as the sole rescuer; acknowledge shared efforts including Sam Isaacs and others where evidence supports it.`;
 
 const anthropic = process.env.ANTHROPIC_API_KEY
   ? new Anthropic({
@@ -65,6 +80,8 @@ The background documents attached to this system prompt contain: the transcript 
 const SYSTEM_PROMPT_PATH = path.join(__dirname, "system-prompt.json");
 const OPENAI_FILE_IDS_PATH = path.join(__dirname, "openai-file-ids.json");
 const PROVIDER_CONFIG_PATH = path.join(__dirname, "provider-config.json");
+const SPLASH_CONFIG_PATH = path.join(__dirname, "splash-config.json");
+const DEFAULT_SPLASH_SETTINGS = { t1Ms: 1000, t2Ms: 1000 };
 
 function loadFileIds() {
   const fileIdsPath = path.join(__dirname, "file-ids.json");
@@ -132,6 +149,34 @@ function loadProviderConfig() {
   }
 
   return DEFAULT_PROVIDER;
+}
+
+function sanitizeSplashSettings(input) {
+  const rawT1 = Number(input?.t1Ms);
+  const rawT2 = Number(input?.t2Ms);
+  const t1Ms = Number.isFinite(rawT1) ? Math.max(0, Math.min(10000, Math.round(rawT1))) : DEFAULT_SPLASH_SETTINGS.t1Ms;
+  const t2Ms = Number.isFinite(rawT2) ? Math.max(0, Math.min(10000, Math.round(rawT2))) : DEFAULT_SPLASH_SETTINGS.t2Ms;
+  return { t1Ms, t2Ms };
+}
+
+function saveSplashSettings(settings) {
+  fs.writeFileSync(SPLASH_CONFIG_PATH, JSON.stringify(settings, null, 2));
+}
+
+function loadSplashSettings() {
+  if (!fs.existsSync(SPLASH_CONFIG_PATH)) {
+    saveSplashSettings(DEFAULT_SPLASH_SETTINGS);
+    return { ...DEFAULT_SPLASH_SETTINGS };
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(SPLASH_CONFIG_PATH, "utf-8"));
+    const sanitized = sanitizeSplashSettings(parsed);
+    return sanitized;
+  } catch (error) {
+    console.error("Unable to read splash-config.json, using defaults:", error.message);
+    return { ...DEFAULT_SPLASH_SETTINGS };
+  }
 }
 
 async function callClaudeWithTimeout(requestParams) {
@@ -282,6 +327,7 @@ const uploadedDocs = loadFileIds();
 const openaiConfig = loadOpenAIConfig();
 let currentSystemPrompt = SYSTEM_PROMPT_TEXT;
 let currentProvider = DEFAULT_PROVIDER;
+let splashSettings = { ...DEFAULT_SPLASH_SETTINGS };
 
 function saveSystemPrompt(promptText) {
   fs.writeFileSync(SYSTEM_PROMPT_PATH, JSON.stringify({ prompt: promptText }, null, 2));
@@ -307,6 +353,7 @@ function loadSystemPrompt() {
 }
 
 currentSystemPrompt = loadSystemPrompt();
+splashSettings = loadSplashSettings();
 
 const LOG_FILENAME_RE = /^session-[0-9TZa-z.-]+-[a-f0-9]{16}\.json$/;
 
@@ -490,6 +537,22 @@ app.post("/api/admin/logout", (req, res) => {
 
 app.get("/api/admin/me", (req, res) => {
   return res.json({ admin: Boolean(req.session && req.session.admin) });
+});
+
+app.get("/api/splash-settings", (req, res) => {
+  return res.json(splashSettings);
+});
+
+app.post("/api/admin/splash-settings", requireAdmin, (req, res) => {
+  const updated = sanitizeSplashSettings(req.body || {});
+  splashSettings = updated;
+  try {
+    saveSplashSettings(updated);
+  } catch (error) {
+    console.error("Failed to save splash-config.json:", error);
+    return res.status(500).json({ error: "Splash settings changed in memory but could not be saved to disk." });
+  }
+  return res.json(updated);
 });
 
 app.get("/api/admin/logs", requireAdmin, (req, res) => {
@@ -696,7 +759,7 @@ app.post("/api/chat", async (req, res) => {
       const requestParams = {
         model: OPENAI_MODEL,
         max_output_tokens: MAX_RESPONSE_TOKENS,
-        instructions: `${currentSystemPrompt}\n\n${OPENAI_STYLE_ADDENDUM}`,
+        instructions: `${currentSystemPrompt}\n\n${SOURCE_PRIORITY_ADDENDUM}\n\n${OPENAI_STYLE_ADDENDUM}`,
         temperature: 1,
         input: inputMessages,
       };
@@ -761,7 +824,7 @@ app.post("/api/chat", async (req, res) => {
       model: "claude-sonnet-4-6",
       max_tokens: MAX_RESPONSE_TOKENS,
       betas: ["files-api-2025-04-14", "pdfs-2024-09-25"],
-      system: currentSystemPrompt,
+      system: `${currentSystemPrompt}\n\n${SOURCE_PRIORITY_ADDENDUM}`,
       messages: requestMessages,
     };
 

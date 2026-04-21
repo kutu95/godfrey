@@ -21,25 +21,44 @@ async function uploadDocuments() {
     process.exit(1);
   }
 
-  const files = fs
-    .readdirSync(docsDir)
-    .filter((file) => file.toLowerCase().endsWith(".pdf"));
+  const MIME_BY_EXT = {
+    ".pdf": "application/pdf",
+    ".md": "text/markdown",
+    ".txt": "text/plain",
+  };
+  const candidateFiles = fs.readdirSync(docsDir).filter((file) => {
+    const ext = path.extname(file).toLowerCase();
+    return Boolean(MIME_BY_EXT[ext]);
+  });
+
+  const files = [];
+  for (const filename of candidateFiles) {
+    const fullPath = path.join(docsDir, filename);
+    const size = fs.statSync(fullPath).size;
+    if (size === 0) {
+      console.warn(`Skipping empty file: ${filename}`);
+      continue;
+    }
+    files.push(filename);
+  }
 
   if (files.length === 0) {
-    console.error("No PDF files found in docs/. Add PDFs, then run this script again.");
+    console.error("No non-empty supported docs found in docs/. Add .pdf, .md, or .txt files, then run this script again.");
     process.exit(1);
   }
 
   const uploaded = [];
 
-  console.log(`Found ${files.length} PDF file(s). Uploading...`);
+  console.log(`Found ${files.length} supported document(s). Uploading...`);
 
   for (const filename of files) {
     const fullPath = path.join(docsDir, filename);
+    const ext = path.extname(filename).toLowerCase();
+    const mimeType = MIME_BY_EXT[ext];
     console.log(`Uploading ${filename}...`);
 
     const fileObject = await toFile(fs.readFileSync(fullPath), filename, {
-      type: "application/pdf",
+      type: mimeType,
     });
 
     const result = await anthropic.beta.files.upload({

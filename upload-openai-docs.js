@@ -19,16 +19,28 @@ async function uploadOpenAIDocuments() {
     process.exit(1);
   }
 
-  const files = fs
+  const SUPPORTED_EXTENSIONS = new Set([".pdf", ".md", ".txt"]);
+  const candidateFiles = fs
     .readdirSync(docsDir)
-    .filter((file) => file.toLowerCase().endsWith(".pdf"));
+    .filter((file) => SUPPORTED_EXTENSIONS.has(path.extname(file).toLowerCase()));
+
+  const files = [];
+  for (const filename of candidateFiles) {
+    const fullPath = path.join(docsDir, filename);
+    const size = fs.statSync(fullPath).size;
+    if (size === 0) {
+      console.warn(`Skipping empty file: ${filename}`);
+      continue;
+    }
+    files.push(filename);
+  }
 
   if (files.length === 0) {
-    console.error("No PDF files found in docs/. Add PDFs, then run this script again.");
+    console.error("No non-empty supported docs found in docs/. Add .pdf, .md, or .txt files, then run this script again.");
     process.exit(1);
   }
 
-  console.log(`Creating OpenAI vector store and uploading ${files.length} PDF file(s)...`);
+  console.log(`Creating OpenAI vector store and uploading ${files.length} document file(s)...`);
 
   const vectorStore = await openai.vectorStores.create({
     name: "Captain John Godfrey Context",

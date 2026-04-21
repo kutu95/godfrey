@@ -38,6 +38,14 @@ const adminSignedInBlock = document.getElementById("adminSignedInBlock");
 const refreshLogsButton = document.getElementById("refreshLogsButton");
 const logFileSelect = document.getElementById("logFileSelect");
 const logViewerContent = document.getElementById("logViewerContent");
+const captainPortraitButton = document.getElementById("captainPortraitButton");
+const portraitModal = document.getElementById("portraitModal");
+const portraitModalClose = document.getElementById("portraitModalClose");
+const splashScreen = document.getElementById("splashScreen");
+const splashT1Input = document.getElementById("splashT1Input");
+const splashT2Input = document.getElementById("splashT2Input");
+const saveSplashSettingsAdminButton = document.getElementById("saveSplashSettingsAdminButton");
+const splashSettingsStatus = document.getElementById("splashSettingsStatus");
 
 const fetchOpts = { credentials: "include" };
 
@@ -46,6 +54,8 @@ let isAdmin = false;
 let logSessionId = null;
 let isSending = false;
 const CHAT_TIMEOUT_MS = 20000;
+const DEFAULT_SPLASH_SETTINGS = { t1Ms: 1000, t2Ms: 1000 };
+let splashSettings = { ...DEFAULT_SPLASH_SETTINGS };
 /** Milliseconds of quiet after the Captain's last reply before a single in-character nudge (display only). */
 const IDLE_NUDGE_MS = 120000;
 let idleNudgeTimer = null;
@@ -91,11 +101,61 @@ const defaultSpeechSettings = {
 let speechSettings = JSON.parse(JSON.stringify(defaultSpeechSettings));
 
 function appendMessage(role, content) {
+  const isCaptain = role === "assistant";
+  const row = document.createElement("div");
+  row.className = `message-row ${isCaptain ? "captain" : "visitor"}`;
+
+  const avatar = document.createElement("div");
+  avatar.className = `message-avatar ${isCaptain ? "captain" : "visitor"}`;
+  if (isCaptain) {
+    const avatarImage = document.createElement("img");
+    avatarImage.className = "message-avatar-image";
+    avatarImage.src = "images/Captain Godfrey.png";
+    avatarImage.alt = "Captain John Godfrey";
+    avatarImage.loading = "lazy";
+    avatar.appendChild(avatarImage);
+  } else {
+    avatar.textContent = "U";
+    avatar.setAttribute("aria-hidden", "true");
+  }
+
   const message = document.createElement("div");
-  message.className = `message ${role === "assistant" ? "captain" : "visitor"}`;
+  message.className = `message ${isCaptain ? "captain" : "visitor"}`;
   message.textContent = content;
-  chatWindow.appendChild(message);
+
+  if (isCaptain) {
+    row.appendChild(avatar);
+    row.appendChild(message);
+  } else {
+    row.appendChild(message);
+    row.appendChild(avatar);
+  }
+
+  chatWindow.appendChild(row);
   chatWindow.scrollTop = chatWindow.scrollHeight;
+}
+
+function openPortraitModal() {
+  if (!portraitModal) return;
+  portraitModal.classList.remove("hidden-block");
+  document.body.classList.add("portrait-modal-open");
+}
+
+function closePortraitModal() {
+  if (!portraitModal) return;
+  portraitModal.classList.add("hidden-block");
+  document.body.classList.remove("portrait-modal-open");
+}
+
+function runSplashSequence() {
+  if (!splashScreen) return;
+  splashScreen.style.setProperty("--splash-fade-ms", `${splashSettings.t2Ms}ms`);
+  setTimeout(() => {
+    splashScreen.classList.add("fade-out");
+    setTimeout(() => {
+      splashScreen.classList.add("hidden-block");
+    }, splashSettings.t2Ms);
+  }, splashSettings.t1Ms);
 }
 
 function clearIdleNudgeTimer() {
@@ -163,6 +223,72 @@ function setAdminAuthStatus(message, isError = false) {
   adminAuthStatus.style.color = isError ? "#e3a0a0" : "";
 }
 
+function setSplashSettingsStatus(message, isError = false) {
+  if (!splashSettingsStatus) return;
+  splashSettingsStatus.textContent = message;
+  splashSettingsStatus.style.color = isError ? "#e3a0a0" : "";
+}
+
+function parseSplashTiming(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.min(10000, Math.round(parsed)));
+}
+
+function applySplashSettingsToInputs() {
+  if (!splashT1Input || !splashT2Input) return;
+  splashT1Input.value = String(splashSettings.t1Ms);
+  splashT2Input.value = String(splashSettings.t2Ms);
+}
+
+async function loadSplashSettings() {
+  try {
+    const response = await fetch("/api/splash-settings", fetchOpts);
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Unable to load splash settings.");
+    }
+    splashSettings = {
+      t1Ms: parseSplashTiming(data.t1Ms, DEFAULT_SPLASH_SETTINGS.t1Ms),
+      t2Ms: parseSplashTiming(data.t2Ms, DEFAULT_SPLASH_SETTINGS.t2Ms),
+    };
+  } catch {
+    splashSettings = { ...DEFAULT_SPLASH_SETTINGS };
+  }
+  applySplashSettingsToInputs();
+}
+
+async function saveSplashSettings() {
+  if (!isAdmin) return;
+  const next = {
+    t1Ms: parseSplashTiming(splashT1Input?.value, splashSettings.t1Ms),
+    t2Ms: parseSplashTiming(splashT2Input?.value, splashSettings.t2Ms),
+  };
+
+  try {
+    const response = await fetch("/api/admin/splash-settings", {
+      ...fetchOpts,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(next),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Unable to save splash settings.");
+    }
+    splashSettings = {
+      t1Ms: parseSplashTiming(data.t1Ms, next.t1Ms),
+      t2Ms: parseSplashTiming(data.t2Ms, next.t2Ms),
+    };
+    applySplashSettingsToInputs();
+    setSplashSettingsStatus("Splash timing saved.");
+  } catch (error) {
+    setSplashSettingsStatus(error.message || "Failed to save splash settings.", true);
+  }
+}
+
 function applyAdminGating() {
   document.querySelectorAll("[data-admin-only]").forEach((el) => {
     el.classList.toggle("admin-only-hidden", !isAdmin);
@@ -183,6 +309,7 @@ async function checkAdminSession() {
   if (isAdmin) {
     loadSystemPrompt();
     refreshLogFileList();
+    loadSplashSettings();
   }
 }
 
@@ -209,6 +336,7 @@ async function adminLogin() {
     applyAdminGating();
     loadSystemPrompt();
     refreshLogFileList();
+    loadSplashSettings();
   } catch (error) {
     setAdminAuthStatus(error.message || "Sign-in failed.", true);
   }
@@ -779,6 +907,12 @@ stopSpeechButton.addEventListener("click", () => {
   setSpeechStatus("Speech stopped.");
 });
 
+if (saveSplashSettingsAdminButton) {
+  saveSplashSettingsAdminButton.addEventListener("click", () => {
+    saveSplashSettings();
+  });
+}
+
 if (SpeechRecognition && voiceInputButton) {
   speechRecognizer = new SpeechRecognition();
   speechRecognizer.lang = "en-AU";
@@ -822,11 +956,15 @@ if ("speechSynthesis" in window) {
   simpleVoiceSelect.disabled = true;
 }
 
-loadSpeechSettings();
-applySpeechSettingsToInputs();
-updateSpeechPanelVisibility();
-loadProvider();
-checkAdminSession();
+(async () => {
+  await loadSplashSettings();
+  runSplashSequence();
+  loadSpeechSettings();
+  applySpeechSettingsToInputs();
+  updateSpeechPanelVisibility();
+  loadProvider();
+  checkAdminSession();
+})();
 
 adminLoginButton.addEventListener("click", () => {
   adminLogin();
@@ -850,3 +988,25 @@ refreshLogsButton.addEventListener("click", () => {
 logFileSelect.addEventListener("change", () => {
   loadSelectedLogFile();
 });
+
+if (captainPortraitButton && portraitModal && portraitModalClose) {
+  captainPortraitButton.addEventListener("click", () => {
+    openPortraitModal();
+  });
+
+  portraitModalClose.addEventListener("click", () => {
+    closePortraitModal();
+  });
+
+  portraitModal.addEventListener("click", (event) => {
+    if (event.target === portraitModal) {
+      closePortraitModal();
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !portraitModal.classList.contains("hidden-block")) {
+      closePortraitModal();
+    }
+  });
+}

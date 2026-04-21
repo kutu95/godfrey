@@ -7,10 +7,31 @@
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
+    <div id="splashScreen" class="splash-screen" aria-hidden="true">
+      <img class="splash-image" src="images/Captain Godfrey.png" alt="" />
+    </div>
+
     <main class="app-shell">
       <header class="app-header">
-        <h1>Captain John Godfrey — Master, SS Georgette, 1876</h1>
-        <p>Converse with the Captain in the aftermath of the Georgette inquiry.</p>
+        <div class="captain-header-row">
+          <button
+            id="captainPortraitButton"
+            class="captain-portrait-button"
+            type="button"
+            aria-label="View larger portrait of Captain John Godfrey"
+          >
+            <img
+              class="captain-portrait"
+              src="images/Captain Godfrey.png"
+              alt="Portrait of Captain John Godfrey"
+              loading="lazy"
+            />
+          </button>
+          <div class="captain-header-copy">
+            <h1>Captain John Godfrey — Master, SS Georgette, 1876</h1>
+            <p>Converse with the Captain in the aftermath of the Georgette inquiry.</p>
+          </div>
+        </div>
         <div data-admin-only class="provider-controls admin-only-hidden">
           <label for="providerSelect">Response provider:</label>
           <select id="providerSelect">
@@ -143,6 +164,19 @@
       <section data-admin-only class="admin-panel admin-only-hidden">
         <h2>Admin - System Prompt</h2>
         <p>Use this to refine the Captain prompt while the app is running.</p>
+        <div class="admin-splash-settings">
+          <h3>Splash Screen Timing</h3>
+          <div class="admin-splash-grid">
+            <label for="splashT1Input">t1 static time (ms)</label>
+            <input id="splashT1Input" type="number" min="0" max="10000" step="100" value="1000" />
+            <label for="splashT2Input">t2 fade time (ms)</label>
+            <input id="splashT2Input" type="number" min="0" max="10000" step="100" value="1000" />
+          </div>
+          <div class="admin-actions">
+            <button id="saveSplashSettingsAdminButton" type="button">Save Splash Timing</button>
+          </div>
+          <div id="splashSettingsStatus" class="admin-status"></div>
+        </div>
         <textarea
           id="systemPromptInput"
           rows="8"
@@ -167,6 +201,13 @@
         <pre id="logViewerContent">Select a log file to view JSON contents.</pre>
       </section>
     </main>
+
+    <div id="portraitModal" class="portrait-modal hidden-block" role="dialog" aria-modal="true" aria-label="Captain portrait">
+      <button id="portraitModalClose" class="portrait-modal-close" type="button" aria-label="Close portrait view">
+        ×
+      </button>
+      <img class="portrait-modal-image" src="images/Captain Godfrey.png" alt="Captain John Godfrey portrait enlarged" />
+    </div>
 
     <script src="app.js"></script>
   </body>
