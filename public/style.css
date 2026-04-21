@@ -72,10 +72,29 @@ body {
   color: var(--accent);
 }
 
-.app-header p {
+.captain-header-subline {
   margin: 0.35rem 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.25rem;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.captain-header-subline p {
+  margin: 0;
   color: var(--text-muted);
   font-size: 0.95rem;
+}
+
+.captain-header-attribution a {
+  color: #a8c4dc;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.captain-header-attribution a:hover {
+  color: var(--accent);
 }
 
 .captain-header-row {
@@ -395,6 +414,10 @@ button:hover {
   background: #413042;
 }
 
+.conversation-reset-hidden {
+  display: none !important;
+}
+
 .refresh-button {
   align-self: flex-end;
   background: #1f3340;
@@ -403,6 +426,29 @@ button:hover {
 
 .refresh-button:hover {
   background: #28485b;
+}
+
+.download-row {
+  align-self: stretch;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.download-button {
+  background: #203e2f;
+  border-color: #4e7a62;
+}
+
+.download-button:hover {
+  background: #2a533f;
+}
+
+.download-status {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  min-height: 1rem;
 }
 
 .speech-panel {
@@ -574,6 +620,12 @@ button:hover {
 }
 
 @media (max-width: 720px) {
+  .captain-header-subline {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.45rem;
+  }
+
   .captain-header-row {
     align-items: flex-start;
   }

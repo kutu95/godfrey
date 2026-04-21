@@ -30,9 +30,16 @@ async function uploadDocuments() {
     const ext = path.extname(file).toLowerCase();
     return Boolean(MIME_BY_EXT[ext]);
   });
+  const lowercaseNames = new Set(candidateFiles.map((file) => file.toLowerCase()));
+  const hasGeorgeLeakeMarkdown = lowercaseNames.has("george leake.md");
 
   const files = [];
   for (const filename of candidateFiles) {
+    const lower = filename.toLowerCase();
+    if (hasGeorgeLeakeMarkdown && lower === "acc871a.pdf") {
+      console.warn("Skipping acc871a.pdf because George Leake.md is present (duplicate source).");
+      continue;
+    }
     const fullPath = path.join(docsDir, filename);
     const size = fs.statSync(fullPath).size;
     if (size === 0) {

@@ -3,6 +3,7 @@ const path = require("path");
 const crypto = require("crypto");
 const express = require("express");
 const session = require("express-session");
+const PDFDocument = require("pdfkit");
 const Anthropic = require("@anthropic-ai/sdk");
 const OpenAI = require("openai");
 require("dotenv").config();
@@ -81,6 +82,7 @@ const SYSTEM_PROMPT_PATH = path.join(__dirname, "system-prompt.json");
 const OPENAI_FILE_IDS_PATH = path.join(__dirname, "openai-file-ids.json");
 const PROVIDER_CONFIG_PATH = path.join(__dirname, "provider-config.json");
 const SPLASH_CONFIG_PATH = path.join(__dirname, "splash-config.json");
+const CAPTAIN_PORTRAIT_PATH = path.join(__dirname, "public", "images", "Captain Godfrey.png");
 const DEFAULT_SPLASH_SETTINGS = { t1Ms: 1000, t2Ms: 1000 };
 
 function loadFileIds() {
@@ -692,6 +694,98 @@ app.post("/api/tts", async (req, res) => {
       error: "OpenAI speech generation failed.",
       details: error?.message || "Unknown error",
     });
+  }
+});
+
+app.post("/api/conversation-pdf", (req, res) => {
+  try {
+    const incoming = req.body?.messages;
+    if (!Array.isArray(incoming)) {
+      return res.status(400).json({ error: "messages must be an array" });
+    }
+
+    const messages = incoming
+      .filter((msg) => msg && (msg.role === "user" || msg.role === "assistant"))
+      .map((msg) => ({
+        role: msg.role,
+        content: typeof msg.content === "string" ? msg.content.replace(/\r/g, "").trim() : "",
+      }))
+      .filter((msg) => msg.content.length > 0)
+      .slice(-300);
+
+    if (messages.length === 0) {
+      return res.status(400).json({ error: "No conversation messages available for export." });
+    }
+
+    const doc = new PDFDocument({ size: "A4", margin: 50 });
+    const chunks = [];
+
+    doc.on("data", (chunk) => chunks.push(chunk));
+    doc.on("error", (error) => {
+      console.error("PDF generation error:", error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Failed to generate PDF." });
+      }
+    });
+    doc.on("end", () => {
+      const pdfBuffer = Buffer.concat(chunks);
+      const filename = `godfrey-conversation-${perthFilenameStamp()}.pdf`;
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.setHeader("Cache-Control", "no-store");
+      res.send(pdfBuffer);
+    });
+
+    const avatarSize = 56;
+    const avatarX = doc.page.margins.left;
+    const avatarY = doc.y;
+    const avatarRadius = avatarSize / 2;
+    const titleX = avatarX + avatarSize + 14;
+    const contentWidth = doc.page.width - doc.page.margins.right - titleX;
+
+    if (fs.existsSync(CAPTAIN_PORTRAIT_PATH)) {
+      try {
+        doc.save();
+        doc.circle(avatarX + avatarRadius, avatarY + avatarRadius, avatarRadius).clip();
+        doc.image(CAPTAIN_PORTRAIT_PATH, avatarX, avatarY, { width: avatarSize, height: avatarSize });
+        doc.restore();
+        doc
+          .circle(avatarX + avatarRadius, avatarY + avatarRadius, avatarRadius)
+          .lineWidth(1)
+          .strokeColor("#4F6878")
+          .stroke();
+      } catch (error) {
+        console.warn("Unable to include captain portrait in PDF:", error.message);
+      }
+    }
+
+    doc.font("Helvetica-Bold").fontSize(18).fillColor("#111111").text("Captain John Godfrey Conversation", titleX, avatarY + 8, {
+      width: contentWidth,
+    });
+    doc.font("Helvetica").fontSize(10).fillColor("#555555").text(`Exported: ${formatLogPerthTimestamp()}`, titleX, avatarY + 32, {
+      width: contentWidth,
+    });
+    doc.y = Math.max(doc.y, avatarY + avatarSize + 8);
+    doc.moveDown(0.8);
+
+    messages.forEach((msg, index) => {
+      const speaker = msg.role === "assistant" ? "Captain John Godfrey" : "User";
+      doc.font("Helvetica-Bold").fontSize(12).fillColor("#111111").text(`${speaker}:`);
+      doc.moveDown(0.2);
+      doc.font("Helvetica").fontSize(11).fillColor("#222222").text(msg.content, { lineGap: 2 });
+      doc.moveDown(0.6);
+
+      if (index < messages.length - 1) {
+        const y = doc.y;
+        doc.moveTo(doc.page.margins.left, y).lineTo(doc.page.width - doc.page.margins.right, y).lineWidth(0.4).stroke("#CCCCCC");
+        doc.moveDown(0.6);
+      }
+    });
+
+    doc.end();
+  } catch (error) {
+    console.error("Conversation PDF route failed:", error);
+    return res.status(500).json({ error: "Failed to generate PDF." });
   }
 });
 

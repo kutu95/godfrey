@@ -29,7 +29,19 @@
           </button>
           <div class="captain-header-copy">
             <h1>Captain John Godfrey — Master, SS Georgette, 1876</h1>
-            <p>Converse with the Captain in the aftermath of the Georgette inquiry.</p>
+            <div class="captain-header-subline">
+              <p class="captain-header-tagline">
+                Converse with the Captain in the aftermath of the Georgette inquiry.
+              </p>
+              <p class="captain-header-attribution">
+                Based on the research of
+                <a
+                  href="https://www.vanzellerwriter.com/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >Dr. Marcia van Zeller</a>.
+              </p>
+            </div>
           </div>
         </div>
         <div data-admin-only class="provider-controls admin-only-hidden">
@@ -60,6 +72,13 @@
         <button id="voiceInputButton" type="button">Dictate</button>
         <button type="submit">Send</button>
       </form>
+
+      <div class="download-row">
+        <button id="downloadConversationButton" class="download-button" type="button">
+          Download Conversation (PDF)
+        </button>
+        <span id="downloadStatus" class="download-status"></span>
+      </div>
 
       <section class="admin-auth-panel" aria-label="Administrator sign-in">
         <h2>Administrator</h2>
@@ -154,10 +173,10 @@
         </div>
       </section>
 
-      <button id="resetButton" class="reset-button" type="button">
+      <button id="resetButton" class="reset-button conversation-reset-hidden" type="button">
         Reset Conversation
       </button>
-      <button id="refreshContextButton" class="refresh-button" type="button">
+      <button id="refreshContextButton" class="refresh-button admin-only-hidden" data-admin-only type="button">
         Refresh Document Context (Next Reply)
       </button>
 

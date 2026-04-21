@@ -4,6 +4,8 @@ const messageInput = document.getElementById("messageInput");
 const voiceInputButton = document.getElementById("voiceInputButton");
 const resetButton = document.getElementById("resetButton");
 const refreshContextButton = document.getElementById("refreshContextButton");
+const downloadConversationButton = document.getElementById("downloadConversationButton");
+const downloadStatus = document.getElementById("downloadStatus");
 const typingIndicator = document.getElementById("typingIndicator");
 const providerSelect = document.getElementById("providerSelect");
 const saveProviderButton = document.getElementById("saveProviderButton");
@@ -211,6 +213,12 @@ function setVoiceListening(isActive) {
 function setProviderStatus(message, isError = false) {
   providerStatus.textContent = message;
   providerStatus.style.color = isError ? "#e3a0a0" : "";
+}
+
+function setDownloadStatus(message, isError = false) {
+  if (!downloadStatus) return;
+  downloadStatus.textContent = message;
+  downloadStatus.style.color = isError ? "#e3a0a0" : "";
 }
 
 function setAdminStatus(message, isError = false) {
@@ -832,6 +840,53 @@ async function sendMessage(content) {
   }
 }
 
+async function downloadConversationPdf() {
+  if (!Array.isArray(conversation) || conversation.length === 0) {
+    setDownloadStatus("No conversation to download yet.", true);
+    return;
+  }
+
+  if (downloadConversationButton) {
+    downloadConversationButton.disabled = true;
+  }
+  setDownloadStatus("Preparing PDF...");
+
+  try {
+    const response = await fetch("/api/conversation-pdf", {
+      ...fetchOpts,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ messages: conversation }),
+    });
+
+    if (!response.ok) {
+      const maybeJson = await response.json().catch(() => ({}));
+      throw new Error(maybeJson.error || "Unable to generate PDF.");
+    }
+
+    const pdfBlob = await response.blob();
+    const blobUrl = URL.createObjectURL(pdfBlob);
+    const anchor = document.createElement("a");
+    anchor.href = blobUrl;
+    const contentDisposition = response.headers.get("Content-Disposition");
+    const filenameMatch = contentDisposition && contentDisposition.match(/filename="([^"]+)"/);
+    anchor.download = filenameMatch ? filenameMatch[1] : "godfrey-conversation.pdf";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(blobUrl);
+    setDownloadStatus("Conversation PDF downloaded.");
+  } catch (error) {
+    setDownloadStatus(error.message || "Unable to generate PDF.", true);
+  } finally {
+    if (downloadConversationButton) {
+      downloadConversationButton.disabled = false;
+    }
+  }
+}
+
 chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
 
@@ -873,6 +928,12 @@ refreshContextButton.addEventListener("click", () => {
     "*He arranges a bundle of papers upon the table.* Very well - I shall consult the records afresh on my next reply."
   );
 });
+
+if (downloadConversationButton) {
+  downloadConversationButton.addEventListener("click", () => {
+    downloadConversationPdf();
+  });
+}
 
 refreshPromptButton.addEventListener("click", () => {
   loadSystemPrompt();
