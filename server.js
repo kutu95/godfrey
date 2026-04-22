@@ -11,7 +11,10 @@ require("dotenv").config();
 const app = express();
 app.set("trust proxy", 1);
 const PORT = process.env.PORT || 3000;
-const LOGS_DIR = path.join(__dirname, "logs");
+/** Session JSON logs; set GODFREY_LOGS_DIR on servers so history survives git pull / deploy in the repo tree. */
+const LOGS_DIR = process.env.GODFREY_LOGS_DIR
+  ? path.resolve(process.env.GODFREY_LOGS_DIR)
+  : path.join(__dirname, "logs");
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
 const SESSION_SECRET =
   process.env.ADMIN_SESSION_SECRET || process.env.SESSION_SECRET || "dev-insecure-change-admin-session-secret";

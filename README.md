@@ -31,6 +31,8 @@ node upload-docs.js
 
 The script logs each uploaded filename and file ID, then writes all IDs to `file-ids.json`.
 
+**Source of truth:** After you change documents on your **development machine**, run `upload-docs.js` there, then **commit and push** `file-ids.json` with the rest of the app. Production servers should use that repository copy (see **Deploying updates** below), not a separately edited file on the server.
+
 ## 5) Upload PDFs for OpenAI (one-time per document set)
 
 Run this script to create an OpenAI vector store and upload your PDFs:
@@ -48,6 +50,19 @@ node server.js
 ```
 
 Open your browser at [http://localhost:3000](http://localhost:3000).
+
+## 7) Deploying updates (e.g. VPS)
+
+Pull the latest code as usual. The committed **`file-ids.json` from your dev host is the master** for Anthropic file IDs; it is meant to be in the repo and updated on the server when you pull.
+
+If `git pull` refuses because the server has local changes to `file-ids.json`, drop those edits so Git can replace the file with the version from the repository:
+
+```bash
+git restore file-ids.json
+git pull origin main
+```
+
+Use the same pattern for `openai-file-ids.json` if that file was modified only on the server but you want the repository copy to win.
 
 ## Notes
 

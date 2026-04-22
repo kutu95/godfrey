@@ -55,6 +55,9 @@ let conversation = [];
 let isAdmin = false;
 let logSessionId = null;
 let isSending = false;
+let hasTrackedConversationStart = false;
+let hasTrackedConversationEnd = false;
+let questionsAskedThisSession = 0;
 const CHAT_TIMEOUT_MS = 20000;
 const DEFAULT_SPLASH_SETTINGS = { t1Ms: 1000, t2Ms: 1000 };
 let splashSettings = { ...DEFAULT_SPLASH_SETTINGS };
@@ -81,6 +84,25 @@ let isListening = false;
 let simpleSpeechVoices = [];
 let activeAudio = null;
 let activeAudioUrl = null;
+
+function trackConversationStartedIfNeeded() {
+  if (hasTrackedConversationStart) return;
+  trackEvent("Conversation Started");
+  hasTrackedConversationStart = true;
+  hasTrackedConversationEnd = false;
+}
+
+function trackConversationEndedIfNeeded() {
+  if (!hasTrackedConversationStart || hasTrackedConversationEnd) return;
+  trackEvent("Conversation Ended", {
+    questions_asked: questionsAskedThisSession,
+  });
+  hasTrackedConversationEnd = true;
+}
+
+function trackError(errorType) {
+  trackEvent("Error", { type: errorType || "unknown" });
+}
 
 const SPEECH_SETTINGS_KEY = "godfrey-speech-settings-v1";
 const BRITISH_EXPRESSION_PRESET =
@@ -740,6 +762,9 @@ async function sendMessage(content) {
   clearIdleNudgeTimer();
   nudgedSinceLastUserTurn = false;
   isSending = true;
+  trackConversationStartedIfNeeded();
+  questionsAskedThisSession += 1;
+  trackEvent("Question Asked", { question_length: content.length });
   conversation.push({ role: "user", content });
   appendMessage("user", content);
 
@@ -783,28 +808,34 @@ async function sendMessage(content) {
     }
     conversation.push({ role: "assistant", content: captainReply });
     appendMessage("assistant", captainReply);
+    trackEvent("Response Received", { response_length: captainReply.length });
     if (typeof data.logSessionId === "string" && data.logSessionId) {
       logSessionId = data.logSessionId;
     }
     speakAssistantReply(captainReply);
     scheduleIdleNudge();
   } catch (error) {
+    let errorType = "unknown";
     if (error.name === "AbortError") {
+      errorType = "timeout_abort";
       appendMessage(
         "assistant",
         "*He glances toward the horizon.* The line has gone dead; pray ask again in a moment."
       );
     } else if (typeof error.message === "string" && error.message.includes("took too long")) {
+      errorType = "timeout";
       appendMessage(
         "assistant",
         "*He checks his watch and exhales.* The exchange has taken too long to complete; ask again and I shall answer directly."
       );
     } else if (typeof error.message === "string" && error.message.includes("Connection to Claude")) {
+      errorType = "claude_connection";
       appendMessage(
         "assistant",
         "*He drums his fingers upon the rail.* There is interference upon the line to shore; put your question again directly."
       );
     } else if (typeof error.message === "string" && error.message.includes("Connection to OpenAI")) {
+      errorType = "openai_connection";
       appendMessage(
         "assistant",
         "*He frowns at the telegraph relay.* The OpenAI line has failed for the moment; ask me again directly."
@@ -817,18 +848,22 @@ async function sendMessage(content) {
       error.errorCode === "anthropic_rate_limit" ||
       error.errorCode === "openai_rate_limit"
     ) {
+      errorType = error.errorCode;
       appendMessage("assistant", error.message);
     } else if (error.errorCode === "anthropic_unknown" || error.errorCode === "openai_unknown") {
+      errorType = error.errorCode;
       appendMessage(
         "assistant",
         `${error.message}\n\n(If this persists, check the terminal where the server is running for the full error.)`
       );
     } else {
+      errorType = error.errorCode || "generic_send_error";
       appendMessage(
         "assistant",
         "*He narrows his eyes.* I must decline for the moment; there is some disturbance in communication."
       );
     }
+    trackError(errorType);
     console.error(error);
   } finally {
     clearTimeout(timeoutId);
@@ -878,8 +913,10 @@ async function downloadConversationPdf() {
     anchor.remove();
     URL.revokeObjectURL(blobUrl);
     setDownloadStatus("Conversation PDF downloaded.");
+    trackEvent("Conversation Downloaded PDF");
   } catch (error) {
     setDownloadStatus(error.message || "Unable to generate PDF.", true);
+    trackError("pdf_download_failed");
   } finally {
     if (downloadConversationButton) {
       downloadConversationButton.disabled = false;
@@ -911,9 +948,13 @@ messageInput.addEventListener("input", () => {
 });
 
 resetButton.addEventListener("click", () => {
+  trackConversationEndedIfNeeded();
   clearIdleNudgeTimer();
   nudgedSinceLastUserTurn = false;
   conversation = [];
+  questionsAskedThisSession = 0;
+  hasTrackedConversationStart = false;
+  hasTrackedConversationEnd = false;
   chatWindow.innerHTML = "";
   includeDocumentsNextTurn = true;
   logSessionId = null;
@@ -1071,3 +1112,7 @@ if (captainPortraitButton && portraitModal && portraitModalClose) {
     }
   });
 }
+
+window.addEventListener("pagehide", () => {
+  trackConversationEndedIfNeeded();
+});

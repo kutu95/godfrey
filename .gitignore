@@ -1,3 +1,4 @@
 node_modules/
 .env
+# Session chat history (session-*.json). Never commit. On production, prefer GODFREY_LOGS_DIR outside this clone.
 logs/
