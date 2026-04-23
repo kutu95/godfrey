@@ -161,7 +161,10 @@ function appendMessage(role, content) {
 }
 
 function shouldUseMobileReplyFocus() {
-  return window.matchMedia("(max-width: 720px)").matches;
+  return (
+    window.matchMedia("(max-width: 900px)").matches ||
+    window.matchMedia("(hover: none) and (pointer: coarse)").matches
+  );
 }
 
 function focusLatestReplyRow(row) {
