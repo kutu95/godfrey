@@ -641,28 +641,28 @@ button:hover {
   }
 
   .chat-form {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "input send"
+      ". dictate";
     align-items: stretch;
     gap: 0.5rem;
   }
 
   #messageInput {
-    order: 1;
-    flex: 1 1 0;
+    grid-area: input;
     min-width: 0;
   }
 
   .chat-form button[type="submit"] {
-    order: 2;
-    flex: 0 0 auto;
+    grid-area: send;
     white-space: nowrap;
   }
 
   #voiceInputButton {
-    order: 3;
-    flex: 0 0 auto;
-    margin-left: auto;
+    grid-area: dictate;
+    justify-self: end;
   }
 
   .message {
