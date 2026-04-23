@@ -520,7 +520,18 @@ app.use(
     },
   })
 );
-app.use(express.static(path.join(__dirname, "public")));
+app.use(
+  express.static(path.join(__dirname, "public"), {
+    setHeaders: (res, filePath) => {
+      const ext = path.extname(filePath).toLowerCase();
+      if (ext === ".html" || ext === ".css" || ext === ".js") {
+        res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+        res.setHeader("Pragma", "no-cache");
+        res.setHeader("Expires", "0");
+      }
+    },
+  })
+);
 
 app.post("/api/admin/login", (req, res) => {
   if (!ADMIN_PASSWORD) {
