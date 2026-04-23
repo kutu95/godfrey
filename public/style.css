@@ -640,6 +640,31 @@ button:hover {
     max-height: 58vh;
   }
 
+  .chat-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 0.5rem;
+  }
+
+  #messageInput {
+    order: 1;
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .chat-form button[type="submit"] {
+    order: 2;
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  #voiceInputButton {
+    order: 3;
+    flex: 0 0 auto;
+    margin-left: auto;
+  }
+
   .message {
     max-width: 88%;
   }

@@ -157,6 +157,20 @@ function appendMessage(role, content) {
 
   chatWindow.appendChild(row);
   chatWindow.scrollTop = chatWindow.scrollHeight;
+  return row;
+}
+
+function shouldUseMobileReplyFocus() {
+  return window.matchMedia("(max-width: 720px)").matches;
+}
+
+function focusLatestReplyRow(row) {
+  if (!row) return;
+  row.setAttribute("tabindex", "-1");
+  requestAnimationFrame(() => {
+    row.scrollIntoView({ block: "start", behavior: "smooth" });
+    row.focus({ preventScroll: true });
+  });
 }
 
 function openPortraitModal() {
@@ -762,6 +776,7 @@ async function sendMessage(content) {
   clearIdleNudgeTimer();
   nudgedSinceLastUserTurn = false;
   isSending = true;
+  let latestAssistantRow = null;
   trackConversationStartedIfNeeded();
   questionsAskedThisSession += 1;
   trackEvent("Question Asked", { question_length: content.length });
@@ -807,7 +822,7 @@ async function sendMessage(content) {
       captainReply += '\n\n[Reply clipped by response limit — ask "continue" for the next part.]';
     }
     conversation.push({ role: "assistant", content: captainReply });
-    appendMessage("assistant", captainReply);
+    latestAssistantRow = appendMessage("assistant", captainReply);
     trackEvent("Response Received", { response_length: captainReply.length });
     if (typeof data.logSessionId === "string" && data.logSessionId) {
       logSessionId = data.logSessionId;
@@ -818,25 +833,25 @@ async function sendMessage(content) {
     let errorType = "unknown";
     if (error.name === "AbortError") {
       errorType = "timeout_abort";
-      appendMessage(
+      latestAssistantRow = appendMessage(
         "assistant",
         "*He glances toward the horizon.* The line has gone dead; pray ask again in a moment."
       );
     } else if (typeof error.message === "string" && error.message.includes("took too long")) {
       errorType = "timeout";
-      appendMessage(
+      latestAssistantRow = appendMessage(
         "assistant",
         "*He checks his watch and exhales.* The exchange has taken too long to complete; ask again and I shall answer directly."
       );
     } else if (typeof error.message === "string" && error.message.includes("Connection to Claude")) {
       errorType = "claude_connection";
-      appendMessage(
+      latestAssistantRow = appendMessage(
         "assistant",
         "*He drums his fingers upon the rail.* There is interference upon the line to shore; put your question again directly."
       );
     } else if (typeof error.message === "string" && error.message.includes("Connection to OpenAI")) {
       errorType = "openai_connection";
-      appendMessage(
+      latestAssistantRow = appendMessage(
         "assistant",
         "*He frowns at the telegraph relay.* The OpenAI line has failed for the moment; ask me again directly."
       );
@@ -849,16 +864,16 @@ async function sendMessage(content) {
       error.errorCode === "openai_rate_limit"
     ) {
       errorType = error.errorCode;
-      appendMessage("assistant", error.message);
+      latestAssistantRow = appendMessage("assistant", error.message);
     } else if (error.errorCode === "anthropic_unknown" || error.errorCode === "openai_unknown") {
       errorType = error.errorCode;
-      appendMessage(
+      latestAssistantRow = appendMessage(
         "assistant",
         `${error.message}\n\n(If this persists, check the terminal where the server is running for the full error.)`
       );
     } else {
       errorType = error.errorCode || "generic_send_error";
-      appendMessage(
+      latestAssistantRow = appendMessage(
         "assistant",
         "*He narrows his eyes.* I must decline for the moment; there is some disturbance in communication."
       );
@@ -870,8 +885,14 @@ async function sendMessage(content) {
     isSending = false;
     sendButton.disabled = false;
     messageInput.disabled = false;
-    messageInput.focus();
     setTyping(false);
+
+    if (shouldUseMobileReplyFocus()) {
+      messageInput.blur();
+      focusLatestReplyRow(latestAssistantRow);
+    } else {
+      messageInput.focus();
+    }
   }
 }
 
