@@ -22,6 +22,7 @@ body {
   display: flex;
   justify-content: center;
   padding: 2rem 1rem;
+  overflow-x: hidden;
 }
 
 .splash-screen {
@@ -374,10 +375,14 @@ body.portrait-modal-open {
 
 .chat-form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  grid-template-areas: "input send dictate";
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "input send"
+    "dictate dictate";
   align-items: stretch;
   gap: 0.65rem;
+  width: 100%;
+  min-width: 0;
 }
 
 #messageInput {
@@ -399,6 +404,9 @@ body.portrait-modal-open {
 #voiceInputButton {
   grid-area: dictate;
   white-space: nowrap;
+  grid-column: 1 / -1;
+  justify-self: end;
+  max-width: 100%;
 }
 
 #messageInput:focus {
@@ -656,30 +664,7 @@ button:hover {
   }
 
   .chat-form {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-      "input send"
-      "dictate dictate";
-    align-items: stretch;
     gap: 0.5rem;
-  }
-
-  #messageInput {
-    grid-area: input;
-    min-width: 0;
-  }
-
-  .chat-form button[type="submit"] {
-    grid-area: send;
-    white-space: nowrap;
-  }
-
-  #voiceInputButton {
-    grid-area: dictate;
-    grid-column: 1 / -1;
-    justify-self: end;
-    max-width: 100%;
   }
 
   .message {
