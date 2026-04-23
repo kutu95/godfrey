@@ -160,13 +160,6 @@ function appendMessage(role, content) {
   return row;
 }
 
-function shouldUseMobileReplyFocus() {
-  return (
-    window.matchMedia("(max-width: 900px)").matches ||
-    window.matchMedia("(hover: none) and (pointer: coarse)").matches
-  );
-}
-
 function focusLatestReplyRow(row) {
   if (!row) return;
   row.setAttribute("tabindex", "-1");
@@ -891,13 +884,8 @@ async function sendMessage(content) {
     sendButton.disabled = false;
     messageInput.disabled = false;
     setTyping(false);
-
-    if (shouldUseMobileReplyFocus()) {
-      messageInput.blur();
-      focusLatestReplyRow(latestAssistantRow);
-    } else {
-      messageInput.focus();
-    }
+    messageInput.blur();
+    focusLatestReplyRow(latestAssistantRow);
   }
 }
 
@@ -957,11 +945,7 @@ chatForm.addEventListener("submit", async (event) => {
   if (!content) return;
 
   messageInput.value = "";
-  if (shouldUseMobileReplyFocus()) {
-    messageInput.blur();
-  } else {
-    messageInput.focus();
-  }
+  messageInput.blur();
 
   await sendMessage(content);
 });
