@@ -167,8 +167,10 @@ function shouldUseMobileReplyFocus() {
 function focusLatestReplyRow(row) {
   if (!row) return;
   row.setAttribute("tabindex", "-1");
+  const top = Math.max(0, row.offsetTop - 8);
   requestAnimationFrame(() => {
-    row.scrollIntoView({ block: "start", behavior: "smooth" });
+    chatWindow.scrollTo({ top, behavior: "smooth" });
+    // Keep virtual keyboard dismissed by moving focus away from text input.
     row.focus({ preventScroll: true });
   });
 }
@@ -952,7 +954,11 @@ chatForm.addEventListener("submit", async (event) => {
   if (!content) return;
 
   messageInput.value = "";
-  messageInput.focus();
+  if (shouldUseMobileReplyFocus()) {
+    messageInput.blur();
+  } else {
+    messageInput.focus();
+  }
 
   await sendMessage(content);
 });
