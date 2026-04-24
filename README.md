@@ -53,11 +53,27 @@ Open your browser at [http://localhost:3000](http://localhost:3000).
 
 ## 7) Deploying updates (e.g. VPS)
 
-Pull the latest code as usual. The committed **`file-ids.json` from your dev host is the master** for Anthropic file IDs; it is meant to be in the repo and updated on the server when you pull.
+### Standard server update procedure
+
+Use this from your server shell:
+
+```bash
+cd /apps/godfrey
+git pull origin main
+```
+
+If your process manager does not auto-reload the app, restart after pulling (example):
+
+```bash
+pm2 restart godfrey-app
+```
+
+Pulling updates keeps the server in sync with the repository. The committed **`file-ids.json` from your dev host is the master** for Anthropic file IDs; it is meant to be in the repo and updated on the server when you pull.
 
 If `git pull` refuses because the server has local changes to `file-ids.json`, drop those edits so Git can replace the file with the version from the repository:
 
 ```bash
+cd /apps/godfrey
 git restore file-ids.json
 git pull origin main
 ```
