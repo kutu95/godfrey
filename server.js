@@ -533,6 +533,10 @@ app.use(
   })
 );
 
+app.get("/admin", (req, res) => {
+  return res.sendFile(path.join(__dirname, "public", "admin.html"));
+});
+
 app.post("/api/admin/login", (req, res) => {
   if (!ADMIN_PASSWORD) {
     return res.status(503).json({ error: "ADMIN_PASSWORD is not set in the server environment." });

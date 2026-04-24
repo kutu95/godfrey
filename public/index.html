@@ -85,24 +85,6 @@
         <span id="downloadStatus" class="download-status"></span>
       </div>
 
-      <section class="admin-auth-panel" aria-label="Administrator sign-in">
-        <h2>Administrator</h2>
-        <div id="adminLoginBlock" class="admin-auth-row">
-          <input
-            id="adminPasswordInput"
-            type="password"
-            autocomplete="current-password"
-            placeholder="Admin password"
-          />
-          <button id="adminLoginButton" type="button">Sign in</button>
-          <span id="adminAuthStatus"></span>
-        </div>
-        <div id="adminSignedInBlock" class="admin-auth-row hidden-block">
-          <span id="adminSignedInLabel">Signed in as administrator.</span>
-          <button id="adminLogoutButton" type="button">Sign out</button>
-        </div>
-      </section>
-
       <section data-admin-only class="speech-panel admin-only-hidden">
         <h2>Speech Settings</h2>
         <div class="speech-grid">
@@ -224,6 +206,7 @@
         </div>
         <pre id="logViewerContent">Select a log file to view JSON contents.</pre>
       </section>
+      <a class="admin-signin-link" href="/admin">Administrator sign in</a>
     </main>
 
     <div id="portraitModal" class="portrait-modal hidden-block" role="dialog" aria-modal="true" aria-label="Captain portrait">

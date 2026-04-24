@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Administrator Sign In</title>
+    <link rel="stylesheet" href="style.css?v=20260423-2" />
+  </head>
+  <body>
+    <main class="admin-auth-shell">
+      <section class="admin-auth-panel standalone" aria-label="Administrator sign-in">
+        <h1>Administrator Sign In</h1>
+        <p class="admin-auth-help">Sign in to enable admin controls on the main chat page.</p>
+        <div id="adminLoginBlock" class="admin-auth-row">
+          <input
+            id="adminPasswordInput"
+            type="password"
+            autocomplete="current-password"
+            placeholder="Admin password"
+            autofocus
+          />
+          <button id="adminLoginButton" type="button">Sign in</button>
+        </div>
+        <p id="adminAuthStatus"></p>
+        <a class="admin-back-link" href="/">Back to chat</a>
+      </section>
+    </main>
+    <script src="admin.js?v=20260423-2"></script>
+  </body>
+</html>

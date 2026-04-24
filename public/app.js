@@ -261,6 +261,7 @@ function setAdminStatus(message, isError = false) {
 }
 
 function setAdminAuthStatus(message, isError = false) {
+  if (!adminAuthStatus) return;
   adminAuthStatus.textContent = message;
   adminAuthStatus.style.color = isError ? "#e3a0a0" : "";
 }
@@ -335,8 +336,12 @@ function applyAdminGating() {
   document.querySelectorAll("[data-admin-only]").forEach((el) => {
     el.classList.toggle("admin-only-hidden", !isAdmin);
   });
-  adminLoginBlock.classList.toggle("hidden-block", isAdmin);
-  adminSignedInBlock.classList.toggle("hidden-block", !isAdmin);
+  if (adminLoginBlock) {
+    adminLoginBlock.classList.toggle("hidden-block", isAdmin);
+  }
+  if (adminSignedInBlock) {
+    adminSignedInBlock.classList.toggle("hidden-block", !isAdmin);
+  }
 }
 
 async function checkAdminSession() {
@@ -356,6 +361,7 @@ async function checkAdminSession() {
 }
 
 async function adminLogin() {
+  if (!adminPasswordInput) return;
   const password = adminPasswordInput.value;
   if (!password) {
     setAdminAuthStatus("Enter the admin password.", true);
@@ -1082,20 +1088,26 @@ if ("speechSynthesis" in window) {
   checkAdminSession();
 })();
 
-adminLoginButton.addEventListener("click", () => {
-  adminLogin();
-});
-
-adminLogoutButton.addEventListener("click", () => {
-  adminLogout();
-});
-
-adminPasswordInput.addEventListener("keydown", (event) => {
-  if (event.key === "Enter") {
-    event.preventDefault();
+if (adminLoginButton) {
+  adminLoginButton.addEventListener("click", () => {
     adminLogin();
-  }
-});
+  });
+}
+
+if (adminLogoutButton) {
+  adminLogoutButton.addEventListener("click", () => {
+    adminLogout();
+  });
+}
+
+if (adminPasswordInput) {
+  adminPasswordInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      adminLogin();
+    }
+  });
+}
 
 refreshLogsButton.addEventListener("click", () => {
   refreshLogFileList();

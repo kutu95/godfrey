@@ -67,6 +67,11 @@ body {
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
 }
 
+.admin-auth-shell {
+  width: min(480px, 100%);
+  margin: auto;
+}
+
 .app-header h1 {
   margin: 0;
   font-family: "Garamond", "Times New Roman", serif;
@@ -345,6 +350,27 @@ body.portrait-modal-open {
   padding-top: 0.8rem;
 }
 
+.admin-auth-panel.standalone {
+  background: rgba(7, 19, 31, 0.86);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 1rem;
+  border-top: 1px solid var(--panel-border);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.admin-auth-panel.standalone h1 {
+  margin: 0 0 0.5rem;
+  color: var(--accent);
+  font-family: "Garamond", "Times New Roman", serif;
+}
+
+.admin-auth-help {
+  margin: 0 0 0.85rem;
+  color: var(--text-muted);
+  font-size: 0.92rem;
+}
+
 .admin-auth-panel h2 {
   margin: 0 0 0.5rem;
   color: var(--accent);
@@ -371,6 +397,23 @@ body.portrait-modal-open {
 #adminAuthStatus {
   font-size: 0.88rem;
   color: var(--text-muted);
+}
+
+.admin-signin-link,
+.admin-back-link {
+  color: #a8c4dc;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  font-size: 0.9rem;
+}
+
+.admin-signin-link {
+  align-self: flex-start;
+}
+
+.admin-signin-link:hover,
+.admin-back-link:hover {
+  color: var(--accent);
 }
 
 .chat-form {
