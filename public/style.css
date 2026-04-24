@@ -452,6 +452,25 @@ body.portrait-modal-open {
   max-width: 100%;
 }
 
+.continue-reply-row {
+  display: flex;
+  justify-content: center;
+  padding: 0.2rem 0 0.35rem;
+  min-height: 2.75rem;
+  align-items: center;
+  transition: opacity 0.2s ease;
+}
+
+.continue-reply-button {
+  min-width: 7.5rem;
+  background: #1a4a4a;
+  border-color: #3d7a6a;
+}
+
+.continue-reply-button:hover {
+  background: #1f5a5a;
+}
+
 #messageInput:focus {
   outline: 2px solid #3f5f7a;
   outline-offset: 1px;

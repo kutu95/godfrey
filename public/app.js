@@ -48,6 +48,8 @@ const splashT1Input = document.getElementById("splashT1Input");
 const splashT2Input = document.getElementById("splashT2Input");
 const saveSplashSettingsAdminButton = document.getElementById("saveSplashSettingsAdminButton");
 const splashSettingsStatus = document.getElementById("splashSettingsStatus");
+const continueReplyRow = document.getElementById("continueReplyRow");
+const continueReplyButton = document.getElementById("continueReplyButton");
 
 const fetchOpts = { credentials: "include" };
 
@@ -253,6 +255,11 @@ function setDownloadStatus(message, isError = false) {
   if (!downloadStatus) return;
   downloadStatus.textContent = message;
   downloadStatus.style.color = isError ? "#e3a0a0" : "";
+}
+
+function setContinueReplyVisible(visible) {
+  if (!continueReplyRow) return;
+  continueReplyRow.classList.toggle("hidden-block", !visible);
 }
 
 function setAdminStatus(message, isError = false) {
@@ -777,6 +784,7 @@ async function updateSystemPrompt(mode) {
 
 async function sendMessage(content) {
   if (isSending) return;
+  setContinueReplyVisible(false);
   clearIdleNudgeTimer();
   nudgedSinceLastUserTurn = false;
   isSending = true;
@@ -823,7 +831,9 @@ async function sendMessage(content) {
 
     let captainReply = data.response || "*He pauses, unwilling to offer a reply.*";
     if (data.truncated) {
-      captainReply += '\n\n[Reply clipped by response limit — ask "continue" for the next part.]';
+      captainReply +=
+        "\n\n[Reply clipped by response limit — tap Continue, or type continue, for the next part.]";
+      setContinueReplyVisible(true);
     }
     conversation.push({ role: "assistant", content: captainReply });
     latestAssistantRow = appendMessage("assistant", captainReply);
@@ -967,6 +977,13 @@ messageInput.addEventListener("input", () => {
   bumpIdleNudgeAfterUserActivity();
 });
 
+if (continueReplyButton) {
+  continueReplyButton.addEventListener("click", () => {
+    trackEvent("Reply Continue");
+    void sendMessage("continue");
+  });
+}
+
 resetButton.addEventListener("click", () => {
   trackConversationEndedIfNeeded();
   clearIdleNudgeTimer();
@@ -976,6 +993,7 @@ resetButton.addEventListener("click", () => {
   hasTrackedConversationStart = false;
   hasTrackedConversationEnd = false;
   chatWindow.innerHTML = "";
+  setContinueReplyVisible(false);
   includeDocumentsNextTurn = true;
   logSessionId = null;
   stopSpeechPlayback();
