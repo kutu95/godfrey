@@ -834,6 +834,10 @@ app.post("/api/system-prompt", requireAdmin, (req, res) => {
 });
 
 app.post("/api/chat", async (req, res) => {
+  const voiceRequestId = req.get("X-Godfrey-Voice-Request-Id");
+  if (voiceRequestId) {
+    console.log("godfrey-voice-trace", { phase: "chat_received", requestId: voiceRequestId });
+  }
   const selectedProvider = currentProvider;
 
   try {

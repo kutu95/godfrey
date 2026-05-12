@@ -64,6 +64,10 @@ const continueReplyButton = document.getElementById("continueReplyButton");
 const godfreyPttButton = document.getElementById("godfreyPttButton");
 const godfreyPttLabel = document.getElementById("godfreyPttLabel");
 const godfreyPttInterimLine = document.getElementById("godfreyPttInterimLine");
+/** Collapsible latency / state overlay (voice path). */
+const godfreyVoiceDebugPanel = document.getElementById("godfreyVoiceDebugPanel");
+const godfreyVoiceDebugToggle = document.getElementById("godfreyVoiceDebugToggle");
+const godfreyVoiceDebugContent = document.getElementById("godfreyVoiceDebugContent");
 
 const fetchOpts = { credentials: "include" };
 
@@ -103,9 +107,22 @@ let activeAudio = null;
 let activeAudioUrl = null;
 
 // ---------------------------------------------------------------------------
-// Push-to-talk (Web Speech API — browser only; no server STT)
+// Push-to-talk + voice latency (browser Web Speech API only; no server STT)
 // ---------------------------------------------------------------------------
 
+/** High-level UI / pipeline state for overlay + PTT chrome. */
+const GODFREY_VOICE_UI = {
+  IDLE: "idle",
+  LISTENING: "listening",
+  TRANSCRIBING: "transcribing",
+  WAITING_LLM: "waiting_llm",
+  WAITING_TTS: "waiting_tts",
+  PLAYING: "playing",
+};
+
+let godfreyVoiceUiState = GODFREY_VOICE_UI.IDLE;
+/** Trace object for the in-flight or last completed voice interaction. */
+let godfreyVoiceTrace = null;
 let godfreyPttListening = false;
 let godfreyPttUserAborted = false;
 let godfreyPttSubmitInFlight = false;
@@ -115,22 +132,181 @@ let godfreyLastFinalText = "";
 let godfreyLastFinalAt = 0;
 let godfreyNoSpeechRetryCount = 0;
 
-/** Mic button label + listening / processing ring states. */
-function setGodfreyPttChrome({ listening = false, processing = false } = {}) {
-  if (!godfreyPttButton) {
+function newGodfreyVoiceRequestId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `voice-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function createGodfreyVoiceLatencyTrace(requestId) {
+  const t0 = performance.now();
+  const marks = Object.create(null);
+  return {
+    requestId,
+    startedAt: t0,
+    marks,
+    mark(name) {
+      if (marks[name] !== undefined) {
+        return;
+      }
+      marks[name] = performance.now();
+    },
+    msSinceMicStart(name) {
+      if (marks[name] === undefined) {
+        return null;
+      }
+      return Math.round((marks[name] - t0) * 10) / 10;
+    },
+    durationMs(a, b) {
+      if (marks[a] === undefined || marks[b] === undefined) {
+        return null;
+      }
+      return Math.round((marks[b] - marks[a]) * 10) / 10;
+    },
+  };
+}
+
+function summarizeGodfreyVoiceLatency(trace) {
+  if (!trace) {
+    return {};
+  }
+  const d = (a, b) => trace.durationMs(a, b);
+  return {
+    requestId: trace.requestId,
+    speech_to_final_transcript_ms: d("mic_start", "final_transcript"),
+    transcript_to_first_token_ms: d("final_transcript", "godfrey_first_token"),
+    first_token_to_first_audio_ms: d("godfrey_first_token", "elevenlabs_first_audio"),
+    audio_startup_ms: d("elevenlabs_first_audio", "browser_first_audio_playback"),
+    total_response_latency_ms: d("godfrey_request_start", "browser_playback_complete"),
+    mic_to_playback_complete_ms: d("mic_start", "browser_playback_complete"),
+  };
+}
+
+function logGodfreyVoiceLatency(trace) {
+  if (!trace) {
     return;
   }
-  godfreyPttButton.classList.toggle("is-listening", listening);
-  godfreyPttButton.classList.toggle("is-processing", processing);
-  godfreyPttButton.setAttribute("aria-pressed", listening ? "true" : "false");
+  const summary = summarizeGodfreyVoiceLatency(trace);
+  console.log("godfrey-voice-latency", summary);
+  const rows = Object.keys(trace.marks)
+    .sort((ka, kb) => trace.marks[ka] - trace.marks[kb])
+    .map((name) => ({
+      mark: name,
+      ms_since_mic_start: trace.msSinceMicStart(name),
+    }));
+  if (rows.length) {
+    console.table(rows);
+  }
+}
+
+function setGodfreyVoiceUiState(next) {
+  godfreyVoiceUiState = next;
   if (godfreyPttLabel) {
-    if (listening) {
-      godfreyPttLabel.textContent = "Listening… tap again to cancel";
-    } else if (processing) {
-      godfreyPttLabel.textContent = "Sending…";
-    } else {
-      godfreyPttLabel.textContent = "Tap to speak";
+    const labels = {
+      [GODFREY_VOICE_UI.IDLE]: "Tap to speak",
+      [GODFREY_VOICE_UI.LISTENING]: "Listening… tap again to cancel",
+      [GODFREY_VOICE_UI.TRANSCRIBING]: "Sending…",
+      [GODFREY_VOICE_UI.WAITING_LLM]: "Awaiting Captain's reply…",
+      [GODFREY_VOICE_UI.WAITING_TTS]: "Generating speech…",
+      [GODFREY_VOICE_UI.PLAYING]: "Playing reply…",
+    };
+    if (labels[next]) {
+      godfreyPttLabel.textContent = labels[next];
     }
+  }
+  renderGodfreyVoiceDebugPanel();
+}
+
+function renderGodfreyVoiceDebugPanel() {
+  if (!godfreyVoiceDebugContent) {
+    return;
+  }
+  const trace = godfreyVoiceTrace;
+  const summary = summarizeGodfreyVoiceLatency(trace);
+  const lines = [
+    `state: ${godfreyVoiceUiState}`,
+    `requestId: ${trace?.requestId ?? "—"}`,
+    "websocket: n/a (this web client uses HTTPS fetch only)",
+    "",
+    "transcript_interim:",
+    godfreyLastInterimText || "(none)",
+    "",
+    "transcript_final (last):",
+    godfreyLastFinalText || "(none)",
+    "",
+    "durations_ms:",
+    ...Object.entries(summary)
+      .filter(([k]) => k !== "requestId")
+      .map(([k, v]) => `  ${k}: ${v === null ? "—" : v}`),
+    "",
+    "marks_ms_since_mic_start:",
+    trace
+      ? Object.keys(trace.marks)
+          .sort((a, b) => trace.marks[a] - trace.marks[b])
+          .map((k) => `  ${k}: ${trace.msSinceMicStart(k)}`)
+          .join("\n")
+      : "  —",
+  ];
+  godfreyVoiceDebugContent.textContent = lines.join("\n");
+}
+
+function ensureGodfreyVoiceDebugShellVisible() {
+  if (godfreyVoiceDebugPanel?.hasAttribute("hidden")) {
+    godfreyVoiceDebugPanel.removeAttribute("hidden");
+  }
+}
+
+if (godfreyVoiceDebugToggle && godfreyVoiceDebugPanel) {
+  godfreyVoiceDebugToggle.addEventListener("click", () => {
+    const open = godfreyVoiceDebugPanel.classList.toggle("is-open");
+    godfreyVoiceDebugToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+}
+
+/**
+ * Reads a fetch Response body while recording the time of the first non-empty chunk
+ * (proxy for "first token" on /api/chat JSON bodies).
+ */
+async function readJsonResponseWithFirstChunkMark(response, onFirstChunk) {
+  const reader = response.body?.getReader?.();
+  if (!reader) {
+    const text = await response.text();
+    onFirstChunk?.();
+    try {
+      return text ? JSON.parse(text) : {};
+    } catch (e) {
+      throw new Error(`Invalid JSON from server: ${e.message}`);
+    }
+  }
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let firstNonEmpty = true;
+  try {
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (firstNonEmpty && value && value.byteLength > 0) {
+        firstNonEmpty = false;
+        onFirstChunk?.();
+      }
+      buffer += decoder.decode(value, { stream: true });
+    }
+    buffer += decoder.decode();
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      /* ignore */
+    }
+  }
+  try {
+    return buffer ? JSON.parse(buffer) : {};
+  } catch (e) {
+    throw new Error(`Invalid JSON from server: ${e.message}`);
   }
 }
 
@@ -148,7 +324,7 @@ function resetGodfreyPttVisualIdle() {
     godfreyPttInterimLine.textContent = "";
   }
   godfreyLastInterimText = "";
-  setGodfreyPttChrome({});
+  setGodfreyVoiceUiState(GODFREY_VOICE_UI.IDLE);
 }
 
 function stopGodfreySpeechRecognizer() {
@@ -838,10 +1014,12 @@ function populateSimpleVoices() {
   }
 }
 
-function speakWithSimpleSpeech(text) {
+function speakWithSimpleSpeech(text, hooks = null) {
   if (!("speechSynthesis" in window)) {
     setSpeechStatus("Simple speech is not supported in this browser.", true);
-    return;
+    hooks?.voiceTrace?.mark?.("browser_playback_complete");
+    hooks?.onPlaybackComplete?.();
+    return Promise.resolve();
   }
 
   stopSpeechPlayback();
@@ -856,13 +1034,31 @@ function speakWithSimpleSpeech(text) {
 
   utterance.rate = Math.max(0.6, Math.min(1.4, speechSettings.simple.rate));
   utterance.pitch = Math.max(0.6, Math.min(1.6, speechSettings.simple.pitch));
-  utterance.onstart = () => setSpeechStatus("Speaking with browser voice...");
-  utterance.onend = () => setSpeechStatus("Speech complete.");
-  utterance.onerror = () => setSpeechStatus("Simple speech failed.", true);
-  window.speechSynthesis.speak(utterance);
+
+  return new Promise((resolve) => {
+    utterance.onstart = () => {
+      setSpeechStatus("Speaking with browser voice...");
+      hooks?.onAudioStart?.();
+      hooks?.voiceTrace?.mark?.("browser_first_audio_playback");
+      if (!hooks?.voiceTrace?.marks?.elevenlabs_first_audio) {
+        hooks?.voiceTrace?.mark?.("elevenlabs_first_audio");
+      }
+    };
+    utterance.onend = () => {
+      setSpeechStatus("Speech complete.");
+      hooks?.voiceTrace?.mark?.("browser_playback_complete");
+      resolve();
+    };
+    utterance.onerror = () => {
+      setSpeechStatus("Simple speech failed.", true);
+      hooks?.voiceTrace?.mark?.("browser_playback_complete");
+      resolve();
+    };
+    window.speechSynthesis.speak(utterance);
+  });
 }
 
-async function speakWithOpenAI(text) {
+async function speakWithOpenAI(text, hooks = null) {
   try {
     stopSpeechPlayback();
     setSpeechStatus("Generating OpenAI speech...");
@@ -888,26 +1084,80 @@ async function speakWithOpenAI(text) {
       throw new Error(maybeJson.error || "OpenAI speech request failed.");
     }
 
-    const audioBlob = await response.blob();
+    const reader = response.body?.getReader?.();
+    if (!reader) {
+      const audioBlob = await response.blob();
+      hooks?.voiceTrace?.mark?.("elevenlabs_first_audio");
+      return playFetchedAudioBlob(audioBlob, hooks, "Playing OpenAI speech...");
+    }
+
+    const chunks = [];
+    let first = true;
+    const decoder = new TextDecoder();
+    try {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        if (first && value && value.byteLength > 0) {
+          first = false;
+          hooks?.voiceTrace?.mark?.("elevenlabs_first_audio");
+        }
+        if (value) {
+          chunks.push(value);
+        }
+      }
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const audioBlob = new Blob(chunks, { type: response.headers.get("content-type") || "audio/mpeg" });
+    return playFetchedAudioBlob(audioBlob, hooks, "Playing OpenAI speech...");
+  } catch (error) {
+    console.error(error);
+    setSpeechStatus(error.message || "OpenAI speech failed.", true);
+    hooks?.voiceTrace?.mark?.("browser_playback_complete");
+  }
+}
+
+/**
+ * Plays a blob URL audio clip; used for OpenAI / ElevenLabs browser TTS with latency hooks.
+ */
+function playFetchedAudioBlob(audioBlob, hooks, playingStatusMessage) {
+  return new Promise((resolve) => {
     activeAudioUrl = URL.createObjectURL(audioBlob);
     activeAudio = new Audio(activeAudioUrl);
-    activeAudio.onended = () => {
+    const finish = () => {
       setSpeechStatus("Speech complete.");
       if (activeAudioUrl) {
         URL.revokeObjectURL(activeAudioUrl);
         activeAudioUrl = null;
       }
       activeAudio = null;
+      hooks?.voiceTrace?.mark?.("browser_playback_complete");
+      resolve();
     };
+    activeAudio.onplaying = () => {
+      hooks?.onAudioStart?.();
+      hooks?.voiceTrace?.mark?.("browser_first_audio_playback");
+      setSpeechStatus(playingStatusMessage || "Playing...");
+    };
+    activeAudio.onended = finish;
     activeAudio.onerror = () => {
       setSpeechStatus("Audio playback failed.", true);
+      finish();
     };
-    await activeAudio.play();
-    setSpeechStatus("Playing OpenAI speech...");
-  } catch (error) {
-    console.error(error);
-    setSpeechStatus(error.message || "OpenAI speech failed.", true);
-  }
+    activeAudio.play().catch(() => {
+      setSpeechStatus("Audio playback failed.", true);
+      finish();
+    });
+  });
 }
 
 function appendElevenLabsDownloadButton(row, blob, filename) {
@@ -945,7 +1195,7 @@ function base64ToBlob(base64, mimeType) {
   return new Blob([bytes], { type: mimeType || "audio/mpeg" });
 }
 
-async function speakWithElevenLabs(text, replyRow) {
+async function speakWithElevenLabs(text, replyRow, hooks = null) {
   try {
     stopSpeechPlayback();
     setSpeechStatus("Generating ElevenLabs speech...");
@@ -972,7 +1222,9 @@ async function speakWithElevenLabs(text, replyRow) {
       }),
     });
 
-    const data = await response.json();
+    const data = await readJsonResponseWithFirstChunkMark(response, () => {
+      hooks?.voiceTrace?.mark?.("elevenlabs_first_audio");
+    });
     if (!response.ok) {
       const detail = [data.error, data.details].filter(Boolean).join(" ");
       throw new Error(detail || "ElevenLabs speech request failed.");
@@ -983,45 +1235,47 @@ async function speakWithElevenLabs(text, replyRow) {
 
     const audioBlob = base64ToBlob(data.audioBase64, data.mimeType);
     appendElevenLabsDownloadButton(replyRow, audioBlob, data.suggestedDownloadFilename);
-    activeAudioUrl = URL.createObjectURL(audioBlob);
-    activeAudio = new Audio(activeAudioUrl);
-    activeAudio.onended = () => {
-      setSpeechStatus("Speech complete.");
-      if (activeAudioUrl) {
-        URL.revokeObjectURL(activeAudioUrl);
-        activeAudioUrl = null;
-      }
-      activeAudio = null;
-    };
-    activeAudio.onerror = () => {
-      setSpeechStatus("Audio playback failed.", true);
-    };
-    await activeAudio.play();
-    setSpeechStatus("Playing ElevenLabs speech...");
+    return playFetchedAudioBlob(audioBlob, hooks, "Playing ElevenLabs speech...");
   } catch (error) {
     console.error(error);
     setSpeechStatus(error.message || "ElevenLabs speech failed. Showing text response only.", true);
+    hooks?.voiceTrace?.mark?.("browser_playback_complete");
   }
 }
 
-async function speakAssistantReply(text, replyRow = null) {
-  if (!isAdmin) return;
+async function speakAssistantReply(text, replyRow = null, hooks = null) {
+  const markPlaybackDone = () => {
+    hooks?.voiceTrace?.mark?.("browser_playback_complete");
+  };
+
+  if (!isAdmin) {
+    markPlaybackDone();
+    return;
+  }
   const cleaned = sanitizeTextForSpeech(text);
-  if (!cleaned) return;
+  if (!cleaned) {
+    markPlaybackDone();
+    return;
+  }
 
   speechSettings = readSpeechSettingsFromInputs();
-  if (speechSettings.mode === "none") return;
+  if (speechSettings.mode === "none") {
+    markPlaybackDone();
+    return;
+  }
   if (speechSettings.mode === "simple") {
-    speakWithSimpleSpeech(cleaned);
+    await speakWithSimpleSpeech(cleaned, hooks);
     return;
   }
   if (speechSettings.mode === "openai") {
-    await speakWithOpenAI(cleaned);
+    await speakWithOpenAI(cleaned, hooks);
     return;
   }
   if (speechSettings.mode === "elevenlabs") {
-    await speakWithElevenLabs(cleaned, replyRow);
+    await speakWithElevenLabs(cleaned, replyRow, hooks);
+    return;
   }
+  markPlaybackDone();
 }
 
 function applyStrongBritishPreset() {
@@ -1130,7 +1384,7 @@ async function updateSystemPrompt(mode) {
 }
 
 async function sendMessage(content, options = {}) {
-  const { voiceInteraction = false } = options;
+  const { voiceTrace = null, voiceInteraction = false } = options;
   const userText = String(content ?? "").trim();
   if (!userText) {
     if (voiceInteraction) {
@@ -1172,12 +1426,22 @@ async function sendMessage(content, options = {}) {
   includeDocumentsNextTurn = false;
 
   try {
+    if (voiceTrace) {
+      setGodfreyVoiceUiState(GODFREY_VOICE_UI.WAITING_LLM);
+    }
+
+    const chatHeaders = {
+      "Content-Type": "application/json",
+    };
+    if (voiceTrace?.requestId) {
+      chatHeaders["X-Godfrey-Voice-Request-Id"] = voiceTrace.requestId;
+    }
+
+    voiceTrace?.mark?.("godfrey_request_start");
     const response = await fetch("/api/chat", {
       ...fetchOpts,
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: chatHeaders,
       body: JSON.stringify({
         messages: conversation,
         includeDocuments: shouldIncludeDocuments,
@@ -1186,7 +1450,14 @@ async function sendMessage(content, options = {}) {
       signal: controller.signal,
     });
 
-    const data = await response.json();
+    let data;
+    if (voiceTrace) {
+      data = await readJsonResponseWithFirstChunkMark(response, () => {
+        voiceTrace.mark("godfrey_first_token");
+      });
+    } else {
+      data = await response.json();
+    }
 
     if (!response.ok) {
       const err = new Error(data.error || data.details || "Request failed");
@@ -1209,9 +1480,25 @@ async function sendMessage(content, options = {}) {
       logSessionId = data.logSessionId;
     }
 
-    await speakAssistantReply(captainReply, latestAssistantRow);
+    if (voiceTrace) {
+      setGodfreyVoiceUiState(GODFREY_VOICE_UI.WAITING_TTS);
+    }
+    const playbackHooks = voiceTrace
+      ? {
+          voiceTrace,
+          onAudioStart: () => setGodfreyVoiceUiState(GODFREY_VOICE_UI.PLAYING),
+        }
+      : null;
+    await speakAssistantReply(captainReply, latestAssistantRow, playbackHooks);
+    if (voiceTrace) {
+      logGodfreyVoiceLatency(voiceTrace);
+    }
     scheduleIdleNudge();
   } catch (error) {
+    if (voiceTrace) {
+      voiceTrace.mark("browser_playback_complete");
+      logGodfreyVoiceLatency(voiceTrace);
+    }
     let errorType = "unknown";
     if (error.name === "AbortError") {
       errorType = "timeout_abort";
@@ -1364,17 +1651,18 @@ if (continueReplyButton) {
 /** Sends a finalized voice transcript through the same /api/chat path as typed input. */
 async function submitGodfreyVoiceTurn(text) {
   const trimmed = String(text || "").trim();
-  if (!trimmed || godfreyPttSubmitInFlight || isSending) {
+  if (!trimmed || godfreyPptSubmitInFlight || isSending) {
     return;
   }
-  godfreyPttSubmitInFlight = true;
-  setGodfreyPttChrome({ processing: true });
-  await sendMessage(trimmed, { voiceInteraction: true });
+  godfreyPptSubmitInFlight = true;
+  godfreyPttButton?.classList.add("is-processing");
+  godfreyPttButton?.classList.remove("is-listening");
+  await sendMessage(trimmed, { voiceTrace: godfreyVoiceTrace, voiceInteraction: true });
 }
 
 /**
  * Primary browser voice path: one tap starts Web Speech recognition; final transcript
- * auto-submits to Godfrey Brain.
+ * auto-submits to Godfrey Brain. Latency marks live on `godfreyVoiceTrace`.
  */
 function setupGodfreyPushToTalk() {
   if (!godfreyPttButton) {
@@ -1397,18 +1685,23 @@ function onGodfreyPttClick() {
   if (!godfreyPttButton || godfreyPttButton.disabled) {
     return;
   }
-  if (isSending || godfreyPttSubmitInFlight) {
+  if (isSending || godfreyPptSubmitInFlight) {
     return;
   }
 
   if (godfreyPttListening) {
-    godfreyPttUserAborted = true;
+    godfreyPptUserAborted = true;
     stopGodfreySpeechRecognizer();
     return;
   }
 
-  godfreyPttUserAborted = false;
-  godfreyPttReceivedFinalThisStart = false;
+  ensureGodfreyVoiceDebugShellVisible();
+  godfreyVoiceTrace = createGodfreyVoiceLatencyTrace(newGodfreyVoiceRequestId());
+  godfreyVoiceTrace.mark("mic_start");
+  renderGodfreyVoiceDebugPanel();
+
+  godfreyPptUserAborted = false;
+  godfreyPptReceivedFinalThisStart = false;
   godfreyNoSpeechRetryCount = 0;
   godfreyLastInterimText = "";
 
@@ -1421,7 +1714,13 @@ function onGodfreyPttClick() {
 
   speechRecognizer.onstart = () => {
     godfreyPttListening = true;
-    setGodfreyPttChrome({ listening: true });
+    godfreyPttButton.classList.add("is-listening");
+    godfreyPttButton.setAttribute("aria-pressed", "true");
+    setGodfreyVoiceUiState(GODFREY_VOICE_UI.LISTENING);
+  };
+
+  speechRecognizer.onspeechstart = () => {
+    godfreyVoiceTrace?.mark?.("speech_detected");
   };
 
   speechRecognizer.onresult = (event) => {
@@ -1438,17 +1737,21 @@ function onGodfreyPttClick() {
     }
     const interimTrim = interim.trim();
     if (interimTrim) {
+      if (!godfreyVoiceTrace?.marks?.first_interim) {
+        godfreyVoiceTrace?.mark?.("first_interim");
+      }
       godfreyLastInterimText = interimTrim;
       if (godfreyPttInterimLine) {
         godfreyPttInterimLine.textContent = interimTrim;
       }
+      renderGodfreyVoiceDebugPanel();
     }
 
     const finalTrim = finals.trim();
     if (!finalTrim) {
       return;
     }
-    if (godfreyPttSubmitInFlight || isSending) {
+    if (godfreyPptSubmitInFlight || isSending) {
       return;
     }
     const now = Date.now();
@@ -1458,22 +1761,26 @@ function onGodfreyPttClick() {
     }
     godfreyLastFinalText = finalTrim;
     godfreyLastFinalAt = now;
+    godfreyVoiceTrace?.mark?.("final_transcript");
     godfreyLastInterimText = "";
     if (godfreyPttInterimLine) {
       godfreyPttInterimLine.textContent = "";
     }
     messageInput.value = finalTrim;
-    setGodfreyPttChrome({ processing: true });
+    godfreyPttButton?.classList.add("is-processing");
+    godfreyPttButton?.classList.remove("is-listening");
+    setGodfreyVoiceUiState(GODFREY_VOICE_UI.TRANSCRIBING);
+    renderGodfreyVoiceDebugPanel();
 
-    godfreyPttReceivedFinalThisStart = true;
+    godfreyPptReceivedFinalThisStart = true;
     void submitGodfreyVoiceTurn(finalTrim);
   };
 
   speechRecognizer.onerror = (event) => {
     const err = event.error || "unknown";
     console.warn("godfrey-voice recognition error", err);
-    if (err === "aborted" && godfreyPttUserAborted) {
-      godfreyPttUserAborted = false;
+    if (err === "aborted" && godfreyPptUserAborted) {
+      godfreyPptUserAborted = false;
       resetGodfreyPttVisualIdle();
       return;
     }
@@ -1501,17 +1808,19 @@ function onGodfreyPttClick() {
   };
 
   speechRecognizer.onend = () => {
-    godfreyPttListening = false;
-    if (godfreyPttUserAborted) {
-      godfreyPttUserAborted = false;
+    godfreyPptListening = false;
+    godfreyPttButton?.classList.remove("is-listening");
+    godfreyPttButton?.setAttribute("aria-pressed", "false");
+    if (godfreyPptUserAborted) {
+      godfreyPptUserAborted = false;
       resetGodfreyPttVisualIdle();
       return;
     }
-    if (godfreyPttSubmitInFlight || isSending) {
+    if (godfreyPptSubmitInFlight || isSending) {
       return;
     }
-    if (!godfreyPttReceivedFinalThisStart) {
-      setGodfreyPttChrome({});
+    if (!godfreyPptReceivedFinalThisStart) {
+      setGodfreyVoiceUiState(GODFREY_VOICE_UI.IDLE);
     }
   };
 

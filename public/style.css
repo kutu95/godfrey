@@ -512,6 +512,50 @@ body.portrait-modal-open {
   min-height: 0;
 }
 
+/* Collapsible voice latency / state overlay */
+.godfrey-voice-debug {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 1500;
+  max-width: min(420px, calc(100vw - 24px));
+  font-size: 0.78rem;
+  color: var(--text-main);
+}
+
+.godfrey-voice-debug-toggle {
+  width: 100%;
+  padding: 0.45rem 0.65rem;
+  font-size: 0.78rem;
+  border-radius: 8px 8px 0 0;
+  background: #1a3550;
+  border: 1px solid var(--panel-border);
+  border-bottom: none;
+  text-align: left;
+}
+
+.godfrey-voice-debug-body {
+  display: none;
+  border: 1px solid var(--panel-border);
+  border-radius: 0 0 8px 8px;
+  background: rgba(10, 22, 36, 0.96);
+  max-height: 45vh;
+  overflow: auto;
+}
+
+.godfrey-voice-debug.is-open .godfrey-voice-debug-body {
+  display: block;
+}
+
+.godfrey-voice-debug-pre {
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, "Cascadia Mono", "Segoe UI Mono", monospace;
+  color: #c8d8e6;
+}
+
 .chat-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
