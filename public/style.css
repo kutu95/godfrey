@@ -416,12 +416,106 @@ body.portrait-modal-open {
   color: var(--accent);
 }
 
+/* Push-to-talk (Web Speech API) — primary voice path */
+.voice-ptt-dock {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.godfrey-ptt-button {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  width: min(100%, 220px);
+  min-height: 120px;
+  padding: 1rem 1.25rem;
+  border-radius: 16px;
+  border: 2px solid var(--panel-border);
+  background: linear-gradient(165deg, #153248 0%, #0f2133 100%);
+  color: var(--text-main);
+  font-size: 0.95rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
+}
+
+.godfrey-ptt-button:hover:not(:disabled) {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(201, 169, 110, 0.35);
+}
+
+.godfrey-ptt-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.godfrey-ptt-button .godfrey-ptt-mic {
+  color: var(--accent);
+  line-height: 0;
+}
+
+.godfrey-ptt-ring {
+  position: absolute;
+  inset: -4px;
+  border-radius: 18px;
+  border: 2px solid transparent;
+  pointer-events: none;
+  transition: border-color 0.2s ease, opacity 0.2s ease;
+  opacity: 0;
+}
+
+.godfrey-ptt-button.is-listening .godfrey-ptt-ring {
+  opacity: 1;
+  border-color: rgba(120, 200, 255, 0.55);
+  animation: godfrey-ptt-pulse 1.25s ease-in-out infinite;
+}
+
+.godfrey-ptt-button.is-processing .godfrey-ptt-ring {
+  opacity: 1;
+  border-color: rgba(201, 169, 110, 0.45);
+}
+
+@keyframes godfrey-ptt-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+  50% {
+    transform: scale(1.03);
+    opacity: 1;
+  }
+}
+
+.godfrey-ptt-label {
+  font-weight: 600;
+  text-align: center;
+  max-width: 12rem;
+  line-height: 1.25;
+}
+
+.godfrey-ptt-interim {
+  margin: 0;
+  min-height: 1.35rem;
+  width: 100%;
+  text-align: center;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.godfrey-ptt-interim:empty {
+  min-height: 0;
+}
+
 .chat-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-areas:
-    "input send"
-    "dictate dictate";
+  grid-template-areas: "input send";
   align-items: stretch;
   gap: 0.65rem;
   width: 100%;
@@ -442,14 +536,6 @@ body.portrait-modal-open {
 .chat-form button[type="submit"] {
   grid-area: send;
   white-space: nowrap;
-}
-
-#voiceInputButton {
-  grid-area: dictate;
-  white-space: nowrap;
-  grid-column: 1 / -1;
-  justify-self: end;
-  max-width: 100%;
 }
 
 .continue-reply-row {
@@ -615,6 +701,10 @@ button:hover {
 .speech-status {
   color: var(--text-muted);
   font-size: 0.9rem;
+}
+
+.elevenlabs-download {
+  margin-top: 0.55rem;
 }
 
 .admin-panel {

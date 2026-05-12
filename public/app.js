@@ -1,7 +1,6 @@
 const chatWindow = document.getElementById("chatWindow");
 const chatForm = document.getElementById("chatForm");
 const messageInput = document.getElementById("messageInput");
-const voiceInputButton = document.getElementById("voiceInputButton");
 const resetButton = document.getElementById("resetButton");
 const refreshContextButton = document.getElementById("refreshContextButton");
 const downloadConversationButton = document.getElementById("downloadConversationButton");
@@ -27,6 +26,13 @@ const openaiSpeechSettings = document.getElementById("openaiSpeechSettings");
 const openaiVoiceSelect = document.getElementById("openaiVoiceSelect");
 const openaiTtsModelSelect = document.getElementById("openaiTtsModelSelect");
 const openaiSpeechSpeedInput = document.getElementById("openaiSpeechSpeedInput");
+const elevenLabsSpeechSettings = document.getElementById("elevenLabsSpeechSettings");
+const elevenLabsApiKeyInput = document.getElementById("elevenLabsApiKeyInput");
+const elevenLabsVoiceIdInput = document.getElementById("elevenLabsVoiceIdInput");
+const elevenLabsModelIdInput = document.getElementById("elevenLabsModelIdInput");
+const elevenLabsStabilityInput = document.getElementById("elevenLabsStabilityInput");
+const elevenLabsSimilarityBoostInput = document.getElementById("elevenLabsSimilarityBoostInput");
+const elevenLabsSpeakerBoostInput = document.getElementById("elevenLabsSpeakerBoostInput");
 const saveSpeechSettingsButton = document.getElementById("saveSpeechSettingsButton");
 const applyBritishPresetButton = document.getElementById("applyBritishPresetButton");
 const stopSpeechButton = document.getElementById("stopSpeechButton");
@@ -48,8 +54,16 @@ const splashT1Input = document.getElementById("splashT1Input");
 const splashT2Input = document.getElementById("splashT2Input");
 const saveSplashSettingsAdminButton = document.getElementById("saveSplashSettingsAdminButton");
 const splashSettingsStatus = document.getElementById("splashSettingsStatus");
+const maxReplyWordsInput = document.getElementById("maxReplyWordsInput");
+const saveResponseSettingsAdminButton = document.getElementById("saveResponseSettingsAdminButton");
+const responseSettingsStatus = document.getElementById("responseSettingsStatus");
 const continueReplyRow = document.getElementById("continueReplyRow");
 const continueReplyButton = document.getElementById("continueReplyButton");
+
+/** Large push-to-talk control (Web Speech API). */
+const godfreyPttButton = document.getElementById("godfreyPttButton");
+const godfreyPttLabel = document.getElementById("godfreyPttLabel");
+const godfreyPttInterimLine = document.getElementById("godfreyPttInterimLine");
 
 const fetchOpts = { credentials: "include" };
 
@@ -63,6 +77,7 @@ let questionsAskedThisSession = 0;
 const CHAT_TIMEOUT_MS = 20000;
 const DEFAULT_SPLASH_SETTINGS = { t1Ms: 1000, t2Ms: 1000 };
 let splashSettings = { ...DEFAULT_SPLASH_SETTINGS };
+let responseSettings = { maxWords: 120 };
 /** Milliseconds of quiet after the Captain's last reply before a single in-character nudge (display only). */
 const IDLE_NUDGE_MS = 120000;
 let idleNudgeTimer = null;
@@ -80,12 +95,81 @@ const IDLE_NUDGE_LINES = [
 
 let includeDocumentsNextTurn = true;
 let currentProvider = "claude";
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+/** Single recognition instance for push-to-talk (recreated after each session where needed). */
 let speechRecognizer = null;
-let isListening = false;
 let simpleSpeechVoices = [];
 let activeAudio = null;
 let activeAudioUrl = null;
+
+// ---------------------------------------------------------------------------
+// Push-to-talk (Web Speech API — browser only; no server STT)
+// ---------------------------------------------------------------------------
+
+let godfreyPttListening = false;
+let godfreyPttUserAborted = false;
+let godfreyPttSubmitInFlight = false;
+let godfreyPttReceivedFinalThisStart = false;
+let godfreyLastInterimText = "";
+let godfreyLastFinalText = "";
+let godfreyLastFinalAt = 0;
+let godfreyNoSpeechRetryCount = 0;
+
+/** Mic button label + listening / processing ring states. */
+function setGodfreyPttChrome({ listening = false, processing = false } = {}) {
+  if (!godfreyPttButton) {
+    return;
+  }
+  godfreyPttButton.classList.toggle("is-listening", listening);
+  godfreyPttButton.classList.toggle("is-processing", processing);
+  godfreyPttButton.setAttribute("aria-pressed", listening ? "true" : "false");
+  if (godfreyPttLabel) {
+    if (listening) {
+      godfreyPttLabel.textContent = "Listening… tap again to cancel";
+    } else if (processing) {
+      godfreyPttLabel.textContent = "Sending…";
+    } else {
+      godfreyPttLabel.textContent = "Tap to speak";
+    }
+  }
+}
+
+function resetGodfreyPttVisualIdle() {
+  godfreyPttListening = false;
+  godfreyPttSubmitInFlight = false;
+  godfreyPttReceivedFinalThisStart = false;
+  godfreyNoSpeechRetryCount = 0;
+  if (godfreyPttButton) {
+    godfreyPttButton.classList.remove("is-listening", "is-processing");
+    godfreyPttButton.setAttribute("aria-pressed", "false");
+    godfreyPttButton.disabled = isSending;
+  }
+  if (godfreyPttInterimLine) {
+    godfreyPttInterimLine.textContent = "";
+  }
+  godfreyLastInterimText = "";
+  setGodfreyPttChrome({});
+}
+
+function stopGodfreySpeechRecognizer() {
+  if (!speechRecognizer) {
+    return;
+  }
+  try {
+    speechRecognizer.stop();
+  } catch {
+    try {
+      speechRecognizer.abort();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function destroyGodfreySpeechRecognizer() {
+  stopGodfreySpeechRecognizer();
+  speechRecognizer = null;
+}
 
 function trackConversationStartedIfNeeded() {
   if (hasTrackedConversationStart) return;
@@ -123,8 +207,17 @@ const defaultSpeechSettings = {
     model: "gpt-4o-mini-tts",
     speed: 1,
   },
+  elevenlabs: {
+    apiKey: "",
+    voiceId: "",
+    modelId: "eleven_multilingual_v2",
+    stability: 0.5,
+    similarityBoost: 0.75,
+    speakerBoost: true,
+  },
 };
 let speechSettings = JSON.parse(JSON.stringify(defaultSpeechSettings));
+let hasStoredElevenLabsApiKey = false;
 
 function appendMessage(role, content) {
   const isCaptain = role === "assistant";
@@ -220,7 +313,7 @@ function scheduleIdleNudge() {
     }
     const line = IDLE_NUDGE_LINES[Math.floor(Math.random() * IDLE_NUDGE_LINES.length)];
     appendMessage("assistant", line);
-    speakAssistantReply(line);
+    void speakAssistantReply(line);
     nudgedSinceLastUserTurn = true;
   }, IDLE_NUDGE_MS);
 }
@@ -238,12 +331,6 @@ function bumpIdleNudgeAfterUserActivity() {
 
 function setTyping(isTyping) {
   typingIndicator.classList.toggle("hidden", !isTyping);
-}
-
-function setVoiceListening(isActive) {
-  isListening = isActive;
-  if (!voiceInputButton) return;
-  voiceInputButton.textContent = isActive ? "Stop Dictation" : "Dictate";
 }
 
 function setProviderStatus(message, isError = false) {
@@ -279,6 +366,18 @@ function setSplashSettingsStatus(message, isError = false) {
   splashSettingsStatus.style.color = isError ? "#e3a0a0" : "";
 }
 
+function setResponseSettingsStatus(message, isError = false) {
+  if (!responseSettingsStatus) return;
+  responseSettingsStatus.textContent = message;
+  responseSettingsStatus.style.color = isError ? "#e3a0a0" : "";
+}
+
+function parseMaxReplyWords(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(10, Math.min(1000, Math.round(parsed)));
+}
+
 function parseSplashTiming(value, fallback) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
@@ -306,6 +405,56 @@ async function loadSplashSettings() {
     splashSettings = { ...DEFAULT_SPLASH_SETTINGS };
   }
   applySplashSettingsToInputs();
+}
+
+function applyResponseSettingsToInputs() {
+  if (!maxReplyWordsInput) return;
+  maxReplyWordsInput.value = String(responseSettings.maxWords);
+}
+
+async function loadResponseSettings() {
+  if (!isAdmin) return;
+  try {
+    const response = await fetch("/api/admin/response-settings", fetchOpts);
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Unable to load response settings.");
+    }
+    responseSettings = {
+      maxWords: parseMaxReplyWords(data.maxWords, responseSettings.maxWords),
+    };
+    applyResponseSettingsToInputs();
+  } catch (error) {
+    setResponseSettingsStatus(error.message || "Unable to load response settings.", true);
+  }
+}
+
+async function saveResponseSettings() {
+  if (!isAdmin) return;
+  const next = {
+    maxWords: parseMaxReplyWords(maxReplyWordsInput?.value, responseSettings.maxWords),
+  };
+  try {
+    const response = await fetch("/api/admin/response-settings", {
+      ...fetchOpts,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(next),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Unable to save response settings.");
+    }
+    responseSettings = {
+      maxWords: parseMaxReplyWords(data.maxWords, next.maxWords),
+    };
+    applyResponseSettingsToInputs();
+    setResponseSettingsStatus("Response limit saved.");
+  } catch (error) {
+    setResponseSettingsStatus(error.message || "Failed to save response settings.", true);
+  }
 }
 
 async function saveSplashSettings() {
@@ -364,6 +513,8 @@ async function checkAdminSession() {
     loadSystemPrompt();
     refreshLogFileList();
     loadSplashSettings();
+    loadElevenLabsSettings();
+    loadResponseSettings();
   }
 }
 
@@ -392,6 +543,8 @@ async function adminLogin() {
     loadSystemPrompt();
     refreshLogFileList();
     loadSplashSettings();
+    loadElevenLabsSettings();
+    loadResponseSettings();
   } catch (error) {
     setAdminAuthStatus(error.message || "Sign-in failed.", true);
   }
@@ -480,6 +633,14 @@ function readSpeechSettingsFromInputs() {
       model: openaiTtsModelSelect.value || "gpt-4o-mini-tts",
       speed: Number(openaiSpeechSpeedInput.value) || 1,
     },
+    elevenlabs: {
+      apiKey: elevenLabsApiKeyInput.value.trim(),
+      voiceId: elevenLabsVoiceIdInput.value.trim(),
+      modelId: elevenLabsModelIdInput.value.trim() || "eleven_multilingual_v2",
+      stability: Number(elevenLabsStabilityInput.value),
+      similarityBoost: Number(elevenLabsSimilarityBoostInput.value),
+      speakerBoost: Boolean(elevenLabsSpeakerBoostInput.checked),
+    },
   };
 }
 
@@ -492,6 +653,12 @@ function applySpeechSettingsToInputs() {
   openaiVoiceSelect.value = speechSettings.openai.voice;
   openaiTtsModelSelect.value = speechSettings.openai.model;
   openaiSpeechSpeedInput.value = String(speechSettings.openai.speed);
+  elevenLabsApiKeyInput.value = speechSettings.elevenlabs.apiKey;
+  elevenLabsVoiceIdInput.value = speechSettings.elevenlabs.voiceId;
+  elevenLabsModelIdInput.value = speechSettings.elevenlabs.modelId;
+  elevenLabsStabilityInput.value = String(speechSettings.elevenlabs.stability);
+  elevenLabsSimilarityBoostInput.value = String(speechSettings.elevenlabs.similarityBoost);
+  elevenLabsSpeakerBoostInput.checked = Boolean(speechSettings.elevenlabs.speakerBoost);
 
   if (speechSettings.simple.voiceName && simpleSpeechVoices.some((v) => v.name === speechSettings.simple.voiceName)) {
     simpleVoiceSelect.value = speechSettings.simple.voiceName;
@@ -502,6 +669,7 @@ function updateSpeechPanelVisibility() {
   const mode = speechModeSelect.value;
   simpleSpeechSettings.style.display = mode === "simple" ? "flex" : "none";
   openaiSpeechSettings.style.display = mode === "openai" ? "flex" : "none";
+  elevenLabsSpeechSettings.style.display = mode === "elevenlabs" ? "flex" : "none";
 }
 
 function loadSpeechSettings() {
@@ -521,6 +689,10 @@ function loadSpeechSettings() {
         ...defaultSpeechSettings.openai,
         ...(parsed.openai || {}),
       },
+      elevenlabs: {
+        ...defaultSpeechSettings.elevenlabs,
+        ...(parsed.elevenlabs || {}),
+      },
     };
   } catch (error) {
     console.warn("Unable to read stored speech settings, using defaults.", error);
@@ -529,9 +701,86 @@ function loadSpeechSettings() {
 
 function saveSpeechSettings() {
   speechSettings = readSpeechSettingsFromInputs();
-  localStorage.setItem(SPEECH_SETTINGS_KEY, JSON.stringify(speechSettings));
   updateSpeechPanelVisibility();
-  setSpeechStatus("Speech settings saved.");
+  saveElevenLabsSettings();
+}
+
+async function loadElevenLabsSettings() {
+  if (!isAdmin) return;
+  try {
+    const response = await fetch("/api/admin/elevenlabs-settings", fetchOpts);
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Unable to load ElevenLabs settings.");
+    }
+    speechSettings.elevenlabs = {
+      ...speechSettings.elevenlabs,
+      voiceId: data.voiceId || "",
+      modelId: data.modelId || speechSettings.elevenlabs.modelId,
+      stability: Number.isFinite(Number(data.stability)) ? Number(data.stability) : speechSettings.elevenlabs.stability,
+      similarityBoost: Number.isFinite(Number(data.similarityBoost))
+        ? Number(data.similarityBoost)
+        : speechSettings.elevenlabs.similarityBoost,
+      speakerBoost: data.speakerBoost !== false,
+      apiKey: data.hasApiKey ? "********" : "",
+    };
+    hasStoredElevenLabsApiKey = Boolean(data.hasApiKey);
+    localStorage.setItem(SPEECH_SETTINGS_KEY, JSON.stringify(speechSettings));
+    applySpeechSettingsToInputs();
+  } catch (error) {
+    setSpeechStatus(error.message || "Unable to load ElevenLabs settings.", true);
+  }
+}
+
+async function saveElevenLabsSettings() {
+  if (!isAdmin) {
+    localStorage.setItem(SPEECH_SETTINGS_KEY, JSON.stringify(speechSettings));
+    setSpeechStatus("Speech settings saved.");
+    return;
+  }
+
+  const latest = readSpeechSettingsFromInputs();
+  const maskedInput = latest.elevenlabs.apiKey === "********";
+
+  try {
+    const response = await fetch("/api/admin/elevenlabs-settings", {
+      ...fetchOpts,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        ...latest.elevenlabs,
+        apiKey: maskedInput && hasStoredElevenLabsApiKey ? "" : latest.elevenlabs.apiKey,
+        apiKeyMasked: maskedInput,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Unable to save ElevenLabs settings.");
+    }
+
+    speechSettings = {
+      ...latest,
+      elevenlabs: {
+        ...latest.elevenlabs,
+        apiKey: data.hasApiKey ? "********" : "",
+        voiceId: data.voiceId || latest.elevenlabs.voiceId,
+        modelId: data.modelId || latest.elevenlabs.modelId,
+        stability: Number.isFinite(Number(data.stability)) ? Number(data.stability) : latest.elevenlabs.stability,
+        similarityBoost: Number.isFinite(Number(data.similarityBoost))
+          ? Number(data.similarityBoost)
+          : latest.elevenlabs.similarityBoost,
+        speakerBoost: data.speakerBoost !== false,
+      },
+    };
+    hasStoredElevenLabsApiKey = Boolean(data.hasApiKey);
+    localStorage.setItem(SPEECH_SETTINGS_KEY, JSON.stringify(speechSettings));
+    applySpeechSettingsToInputs();
+    setSpeechStatus("Speech settings saved.");
+  } catch (error) {
+    setSpeechStatus(error.message || "Unable to save ElevenLabs settings.", true);
+  }
 }
 
 function stopSpeechPlayback() {
@@ -661,7 +910,101 @@ async function speakWithOpenAI(text) {
   }
 }
 
-function speakAssistantReply(text) {
+function appendElevenLabsDownloadButton(row, blob, filename) {
+  if (!row || !(blob instanceof Blob)) return;
+  const existing = row.querySelector(".elevenlabs-download");
+  if (existing) {
+    existing.remove();
+  }
+  const wrapper = document.createElement("div");
+  wrapper.className = "elevenlabs-download";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "download-button";
+  button.textContent = "Download audio";
+  button.addEventListener("click", () => {
+    const blobUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = blobUrl;
+    anchor.download = filename || "godfrey-response.mp3";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(blobUrl);
+  });
+  wrapper.appendChild(button);
+  row.appendChild(wrapper);
+}
+
+function base64ToBlob(base64, mimeType) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mimeType || "audio/mpeg" });
+}
+
+async function speakWithElevenLabs(text, replyRow) {
+  try {
+    stopSpeechPlayback();
+    setSpeechStatus("Generating ElevenLabs speech...");
+    const response = await fetch("/api/tts/elevenlabs", {
+      ...fetchOpts,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        text,
+        settings: {
+          apiKey:
+            speechSettings.elevenlabs.apiKey &&
+            speechSettings.elevenlabs.apiKey !== "********"
+              ? speechSettings.elevenlabs.apiKey
+              : "",
+          voiceId: speechSettings.elevenlabs.voiceId,
+          modelId: speechSettings.elevenlabs.modelId,
+          stability: speechSettings.elevenlabs.stability,
+          similarityBoost: speechSettings.elevenlabs.similarityBoost,
+          speakerBoost: speechSettings.elevenlabs.speakerBoost,
+        },
+      }),
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      const detail = [data.error, data.details].filter(Boolean).join(" ");
+      throw new Error(detail || "ElevenLabs speech request failed.");
+    }
+    if (!data.audioBase64) {
+      throw new Error("No ElevenLabs audio was returned.");
+    }
+
+    const audioBlob = base64ToBlob(data.audioBase64, data.mimeType);
+    appendElevenLabsDownloadButton(replyRow, audioBlob, data.suggestedDownloadFilename);
+    activeAudioUrl = URL.createObjectURL(audioBlob);
+    activeAudio = new Audio(activeAudioUrl);
+    activeAudio.onended = () => {
+      setSpeechStatus("Speech complete.");
+      if (activeAudioUrl) {
+        URL.revokeObjectURL(activeAudioUrl);
+        activeAudioUrl = null;
+      }
+      activeAudio = null;
+    };
+    activeAudio.onerror = () => {
+      setSpeechStatus("Audio playback failed.", true);
+    };
+    await activeAudio.play();
+    setSpeechStatus("Playing ElevenLabs speech...");
+  } catch (error) {
+    console.error(error);
+    setSpeechStatus(error.message || "ElevenLabs speech failed. Showing text response only.", true);
+  }
+}
+
+async function speakAssistantReply(text, replyRow = null) {
   if (!isAdmin) return;
   const cleaned = sanitizeTextForSpeech(text);
   if (!cleaned) return;
@@ -673,7 +1016,11 @@ function speakAssistantReply(text) {
     return;
   }
   if (speechSettings.mode === "openai") {
-    speakWithOpenAI(cleaned);
+    await speakWithOpenAI(cleaned);
+    return;
+  }
+  if (speechSettings.mode === "elevenlabs") {
+    await speakWithElevenLabs(cleaned, replyRow);
   }
 }
 
@@ -782,8 +1129,25 @@ async function updateSystemPrompt(mode) {
   }
 }
 
-async function sendMessage(content) {
-  if (isSending) return;
+async function sendMessage(content, options = {}) {
+  const { voiceInteraction = false } = options;
+  const userText = String(content ?? "").trim();
+  if (!userText) {
+    if (voiceInteraction) {
+      godfreyPttSubmitInFlight = false;
+      resetGodfreyPttVisualIdle();
+      destroyGodfreySpeechRecognizer();
+    }
+    return;
+  }
+  if (isSending) {
+    if (voiceInteraction) {
+      godfreyPttSubmitInFlight = false;
+      resetGodfreyPttVisualIdle();
+      destroyGodfreySpeechRecognizer();
+    }
+    return;
+  }
   setContinueReplyVisible(false);
   clearIdleNudgeTimer();
   nudgedSinceLastUserTurn = false;
@@ -791,13 +1155,16 @@ async function sendMessage(content) {
   let latestAssistantRow = null;
   trackConversationStartedIfNeeded();
   questionsAskedThisSession += 1;
-  trackEvent("Question Asked", { question_length: content.length });
-  conversation.push({ role: "user", content });
-  appendMessage("user", content);
+  trackEvent("Question Asked", { question_length: userText.length });
+  conversation.push({ role: "user", content: userText });
+  appendMessage("user", userText);
 
   setTyping(true);
   sendButton.disabled = true;
   messageInput.disabled = true;
+  if (godfreyPttButton) {
+    godfreyPttButton.disabled = true;
+  }
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), CHAT_TIMEOUT_MS);
@@ -841,7 +1208,8 @@ async function sendMessage(content) {
     if (typeof data.logSessionId === "string" && data.logSessionId) {
       logSessionId = data.logSessionId;
     }
-    speakAssistantReply(captainReply);
+
+    await speakAssistantReply(captainReply, latestAssistantRow);
     scheduleIdleNudge();
   } catch (error) {
     let errorType = "unknown";
@@ -899,9 +1267,18 @@ async function sendMessage(content) {
     isSending = false;
     sendButton.disabled = false;
     messageInput.disabled = false;
+    if (godfreyPttButton) {
+      godfreyPttButton.disabled = false;
+    }
     setTyping(false);
     messageInput.blur();
     focusLatestReplyRow(latestAssistantRow);
+    if (voiceInteraction) {
+      godfreyPttSubmitInFlight = false;
+      messageInput.value = "";
+      resetGodfreyPttVisualIdle();
+      destroyGodfreySpeechRecognizer();
+    }
   }
 }
 
@@ -984,6 +1361,171 @@ if (continueReplyButton) {
   });
 }
 
+/** Sends a finalized voice transcript through the same /api/chat path as typed input. */
+async function submitGodfreyVoiceTurn(text) {
+  const trimmed = String(text || "").trim();
+  if (!trimmed || godfreyPttSubmitInFlight || isSending) {
+    return;
+  }
+  godfreyPttSubmitInFlight = true;
+  setGodfreyPttChrome({ processing: true });
+  await sendMessage(trimmed, { voiceInteraction: true });
+}
+
+/**
+ * Primary browser voice path: one tap starts Web Speech recognition; final transcript
+ * auto-submits to Godfrey Brain.
+ */
+function setupGodfreyPushToTalk() {
+  if (!godfreyPttButton) {
+    return;
+  }
+  if (!SpeechRecognitionCtor) {
+    godfreyPttButton.disabled = true;
+    if (godfreyPttLabel) {
+      godfreyPttLabel.textContent = "Voice not supported";
+    }
+    if (godfreyPttInterimLine) {
+      godfreyPttInterimLine.textContent = "Web Speech API unavailable in this browser.";
+    }
+    return;
+  }
+  godfreyPttButton.addEventListener("click", onGodfreyPttClick);
+}
+
+function onGodfreyPttClick() {
+  if (!godfreyPttButton || godfreyPttButton.disabled) {
+    return;
+  }
+  if (isSending || godfreyPttSubmitInFlight) {
+    return;
+  }
+
+  if (godfreyPttListening) {
+    godfreyPttUserAborted = true;
+    stopGodfreySpeechRecognizer();
+    return;
+  }
+
+  godfreyPttUserAborted = false;
+  godfreyPttReceivedFinalThisStart = false;
+  godfreyNoSpeechRetryCount = 0;
+  godfreyLastInterimText = "";
+
+  destroyGodfreySpeechRecognizer();
+  speechRecognizer = new SpeechRecognitionCtor();
+  speechRecognizer.lang = "en-AU";
+  speechRecognizer.interimResults = true;
+  speechRecognizer.continuous = false;
+  speechRecognizer.maxAlternatives = 1;
+
+  speechRecognizer.onstart = () => {
+    godfreyPttListening = true;
+    setGodfreyPttChrome({ listening: true });
+  };
+
+  speechRecognizer.onresult = (event) => {
+    let interim = "";
+    let finals = "";
+    for (let i = event.resultIndex; i < event.results.length; i += 1) {
+      const r = event.results[i];
+      const piece = r[0]?.transcript ?? "";
+      if (r.isFinal) {
+        finals += piece;
+      } else {
+        interim += piece;
+      }
+    }
+    const interimTrim = interim.trim();
+    if (interimTrim) {
+      godfreyLastInterimText = interimTrim;
+      if (godfreyPttInterimLine) {
+        godfreyPttInterimLine.textContent = interimTrim;
+      }
+    }
+
+    const finalTrim = finals.trim();
+    if (!finalTrim) {
+      return;
+    }
+    if (godfreyPttSubmitInFlight || isSending) {
+      return;
+    }
+    const now = Date.now();
+    if (finalTrim === godfreyLastFinalText && now - godfreyLastFinalAt < 420) {
+      console.warn("godfrey-voice: suppressed duplicate final transcript", finalTrim);
+      return;
+    }
+    godfreyLastFinalText = finalTrim;
+    godfreyLastFinalAt = now;
+    godfreyLastInterimText = "";
+    if (godfreyPttInterimLine) {
+      godfreyPttInterimLine.textContent = "";
+    }
+    messageInput.value = finalTrim;
+    setGodfreyPttChrome({ processing: true });
+
+    godfreyPttReceivedFinalThisStart = true;
+    void submitGodfreyVoiceTurn(finalTrim);
+  };
+
+  speechRecognizer.onerror = (event) => {
+    const err = event.error || "unknown";
+    console.warn("godfrey-voice recognition error", err);
+    if (err === "aborted" && godfreyPttUserAborted) {
+      godfreyPttUserAborted = false;
+      resetGodfreyPttVisualIdle();
+      return;
+    }
+    if (err === "not-allowed") {
+      if (godfreyPttInterimLine) {
+        godfreyPttInterimLine.textContent = "Microphone permission denied — use the text box or allow access.";
+      }
+      resetGodfreyPttVisualIdle();
+      return;
+    }
+    if (err === "no-speech" && godfreyNoSpeechRetryCount < 1 && speechRecognizer) {
+      godfreyNoSpeechRetryCount += 1;
+      try {
+        speechRecognizer.start();
+        return;
+      } catch {
+        /* fall through */
+      }
+    }
+    if (godfreyPttInterimLine && err !== "aborted") {
+      godfreyPttInterimLine.textContent =
+        err === "no-speech" ? "No speech heard — tap to try again." : `Recognition ended (${err}).`;
+    }
+    resetGodfreyPttVisualIdle();
+  };
+
+  speechRecognizer.onend = () => {
+    godfreyPttListening = false;
+    if (godfreyPttUserAborted) {
+      godfreyPttUserAborted = false;
+      resetGodfreyPttVisualIdle();
+      return;
+    }
+    if (godfreyPttSubmitInFlight || isSending) {
+      return;
+    }
+    if (!godfreyPttReceivedFinalThisStart) {
+      setGodfreyPttChrome({});
+    }
+  };
+
+  try {
+    speechRecognizer.start();
+  } catch (err) {
+    console.error(err);
+    if (godfreyPttInterimLine) {
+      godfreyPttInterimLine.textContent = "Could not start recognition.";
+    }
+    resetGodfreyPttVisualIdle();
+  }
+}
+
 resetButton.addEventListener("click", () => {
   trackConversationEndedIfNeeded();
   clearIdleNudgeTimer();
@@ -998,6 +1540,8 @@ resetButton.addEventListener("click", () => {
   logSessionId = null;
   stopSpeechPlayback();
   setTyping(false);
+  destroyGodfreySpeechRecognizer();
+  resetGodfreyPttVisualIdle();
 });
 
 refreshContextButton.addEventListener("click", () => {
@@ -1053,41 +1597,13 @@ if (saveSplashSettingsAdminButton) {
   });
 }
 
-if (SpeechRecognition && voiceInputButton) {
-  speechRecognizer = new SpeechRecognition();
-  speechRecognizer.lang = "en-AU";
-  speechRecognizer.interimResults = false;
-  speechRecognizer.maxAlternatives = 1;
-
-  speechRecognizer.onresult = (event) => {
-    const transcript = event.results?.[0]?.[0]?.transcript?.trim();
-    if (!transcript) return;
-    const existingText = messageInput.value.trim();
-    messageInput.value = existingText ? `${existingText} ${transcript}` : transcript;
-    messageInput.focus();
-  };
-
-  speechRecognizer.onend = () => {
-    setVoiceListening(false);
-  };
-
-  speechRecognizer.onerror = () => {
-    setVoiceListening(false);
-  };
-
-  voiceInputButton.addEventListener("click", () => {
-    if (isListening) {
-      speechRecognizer.stop();
-      return;
-    }
-    setVoiceListening(true);
-    speechRecognizer.start();
+if (saveResponseSettingsAdminButton) {
+  saveResponseSettingsAdminButton.addEventListener("click", () => {
+    saveResponseSettings();
   });
-} else if (voiceInputButton) {
-  voiceInputButton.disabled = true;
-  voiceInputButton.textContent = "Voice Unsupported";
-  voiceInputButton.title = "Speech recognition is not supported in this browser.";
 }
+
+setupGodfreyPushToTalk();
 
 if ("speechSynthesis" in window) {
   window.speechSynthesis.onvoiceschanged = populateSimpleVoices;

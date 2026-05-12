@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Captain John Godfrey Chat</title>
-    <link rel="stylesheet" href="style.css?v=20260424-1" />
+    <link rel="stylesheet" href="style.css?v=20260511-voice" />
     <script
       defer
       data-domain="godfrey.margies.app"
@@ -66,7 +66,28 @@
         Captain Godfrey is composing his reply...
       </div>
 
-      <form id="chatForm" class="chat-form">
+      <section class="voice-ptt-dock" aria-label="Push to talk to Captain Godfrey">
+        <button
+          id="godfreyPttButton"
+          type="button"
+          class="godfrey-ptt-button"
+          aria-pressed="false"
+          aria-label="Push to talk. Tap once to speak; your question is sent when recognition finishes."
+        >
+          <span class="godfrey-ptt-ring" aria-hidden="true"></span>
+          <span class="godfrey-ptt-mic" aria-hidden="true">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="currentColor" focusable="false">
+              <path
+                d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"
+              />
+            </svg>
+          </span>
+          <span id="godfreyPttLabel" class="godfrey-ptt-label">Tap to speak</span>
+        </button>
+        <p id="godfreyPttInterimLine" class="godfrey-ptt-interim" aria-live="polite"></p>
+      </section>
+
+      <form id="chatForm" class="chat-form" novalidate>
         <input
           id="messageInput"
           type="text"
@@ -75,7 +96,6 @@
           required
         />
         <button type="submit">Send</button>
-        <button id="voiceInputButton" type="button">Dictate</button>
       </form>
 
       <div id="continueReplyRow" class="continue-reply-row hidden-block">
@@ -104,6 +124,7 @@
             <option value="none">No speech</option>
             <option value="simple">Simple speech (browser)</option>
             <option value="openai">OpenAI speech</option>
+            <option value="elevenlabs">ElevenLabs speech</option>
           </select>
 
           <label for="speechExpressionInput">Voice expression prompt</label>
@@ -163,6 +184,32 @@
           </div>
         </div>
 
+        <div id="elevenLabsSpeechSettings" class="speech-subpanel">
+          <h3>ElevenLabs Speech</h3>
+          <div class="speech-grid">
+            <label for="elevenLabsApiKeyInput">API key</label>
+            <input id="elevenLabsApiKeyInput" type="password" autocomplete="off" placeholder="sk_..." />
+
+            <label for="elevenLabsVoiceIdInput">Voice ID</label>
+            <input id="elevenLabsVoiceIdInput" type="text" autocomplete="off" placeholder="Enter ElevenLabs voice ID" />
+
+            <label for="elevenLabsModelIdInput">Model ID</label>
+            <input id="elevenLabsModelIdInput" type="text" value="eleven_multilingual_v2" />
+
+            <label for="elevenLabsStabilityInput">Stability (0 - 1)</label>
+            <input id="elevenLabsStabilityInput" type="number" min="0" max="1" step="0.05" value="0.5" />
+
+            <label for="elevenLabsSimilarityBoostInput">Similarity boost (0 - 1)</label>
+            <input id="elevenLabsSimilarityBoostInput" type="number" min="0" max="1" step="0.05" value="0.75" />
+
+            <label for="elevenLabsSpeakerBoostInput">Speaker boost</label>
+            <div class="checkbox-row">
+              <input id="elevenLabsSpeakerBoostInput" type="checkbox" checked />
+              <span>Enable speaker boost when supported by the selected model.</span>
+            </div>
+          </div>
+        </div>
+
         <div class="speech-actions">
           <button id="applyBritishPresetButton" type="button">Apply Strong British Preset</button>
           <button id="saveSpeechSettingsButton" type="button">Save Speech Settings</button>
@@ -193,6 +240,17 @@
             <button id="saveSplashSettingsAdminButton" type="button">Save Splash Timing</button>
           </div>
           <div id="splashSettingsStatus" class="admin-status"></div>
+        </div>
+        <div class="admin-splash-settings">
+          <h3>Response Limit</h3>
+          <div class="admin-splash-grid">
+            <label for="maxReplyWordsInput">Max words per response</label>
+            <input id="maxReplyWordsInput" type="number" min="10" max="1000" step="1" value="120" />
+          </div>
+          <div class="admin-actions">
+            <button id="saveResponseSettingsAdminButton" type="button">Save Response Limit</button>
+          </div>
+          <div id="responseSettingsStatus" class="admin-status"></div>
         </div>
         <textarea
           id="systemPromptInput"
@@ -227,6 +285,6 @@
     </div>
 
     <script src="analytics.js?v=20260424-1"></script>
-    <script src="app.js?v=20260424-1"></script>
+    <script src="app.js?v=20260511-voice"></script>
   </body>
 </html>
