@@ -4,6 +4,8 @@
   "description": "Victorian maritime chat app using Anthropic Claude",
   "main": "server.js",
   "scripts": {
+    "test-parse-performance": "node lib/performance-text.js",
+    "test-segment-speech": "node lib/segment-godfrey-speech.js",
     "start": "node server.js",
     "upload-docs": "node upload-docs.js",
     "upload-openai-docs": "node upload-openai-docs.js"

@@ -1,0 +1,8 @@
+{
+  "apiKey": "",
+  "voiceId": "your_elevenlabs_voice_id_here",
+  "modelId": "eleven_multilingual_v2",
+  "stability": 0.5,
+  "similarityBoost": 0.75,
+  "speakerBoost": true
+}

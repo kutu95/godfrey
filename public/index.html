@@ -16,7 +16,7 @@
       <img class="splash-image" src="images/Captain Godfrey.png" alt="" />
     </div>
 
-    <main class="app-shell">
+    <main class="app-shell" data-godfrey-default-output-target="unreal">
       <header class="app-header">
         <div class="captain-header-row">
           <button
@@ -59,6 +59,16 @@
           <span id="providerStatus" class="provider-status"></span>
         </div>
       </header>
+
+      <div
+        id="adminTestBypassBanner"
+        class="admin-test-bypass-banner hidden-block admin-only-hidden"
+        data-admin-only
+        role="status"
+        aria-live="polite"
+      >
+        Admin test bypass active — AI replies skipped; sample ElevenLabs audio only.
+      </div>
 
       <section id="chatWindow" class="chat-window" aria-live="polite"></section>
 
@@ -261,6 +271,21 @@
           </div>
           <div id="responseSettingsStatus" class="admin-status"></div>
         </div>
+        <div class="admin-splash-settings">
+          <h3>Test Bypass</h3>
+          <label class="admin-checkbox-row" for="adminTestBypassInput">
+            <input id="adminTestBypassInput" type="checkbox" />
+            Bypass AI replies (use saved ElevenLabs sample audio)
+          </label>
+          <p class="admin-auth-help">
+            Skips the LLM for every chat request. On-screen text shows
+            <strong>TEST MODE - Sample audio only</strong>. The first enable generates and saves sample audio for Unreal/browser TTS testing.
+          </p>
+          <div class="admin-actions">
+            <button id="saveAdminTestBypassButton" type="button">Save Test Bypass</button>
+          </div>
+          <div id="adminTestBypassStatus" class="admin-status"></div>
+        </div>
         <textarea
           id="systemPromptInput"
           rows="8"
@@ -294,6 +319,6 @@
     </div>
 
     <script src="analytics.js?v=20260424-1"></script>
-    <script src="app.js?v=20260511-voice"></script>
+    <script src="app.js?v=20260512-unreal-route"></script>
   </body>
 </html>

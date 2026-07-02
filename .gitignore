@@ -2,3 +2,17 @@ node_modules/
 .env
 # Session chat history (session-*.json). Never commit. On production, prefer GODFREY_LOGS_DIR outside this clone.
 logs/
+
+# Local API keys and voice settings (use elevenlabs-config.example.json as template).
+elevenlabs-config.json
+
+# Generated / test audio artifacts (admin bypass sample is regenerated on first use).
+public/audio/generated/
+public/audio/admin-bypass-sample.mp3
+godfrey-16000-mono.pcm
+godfrey-16000-mono.wav
+
+# macOS duplicate / scratch copies — not part of the main app.
+godfrey-app/
+**/.DS_Store
+**/._*

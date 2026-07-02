@@ -1,12 +1,21 @@
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { Readable } = require("stream");
+const { spawn } = require("child_process");
 const express = require("express");
 const session = require("express-session");
 const PDFDocument = require("pdfkit");
 const Anthropic = require("@anthropic-ai/sdk");
 const OpenAI = require("openai");
 require("dotenv").config();
+const {
+  ELEVENLABS_DEFAULT_MODEL_ID,
+  sanitizeElevenLabsSettings,
+  synthesizeOpenAI,
+  synthesizeElevenLabs,
+} = require("./services/tts-service");
+const { stripPerformanceCues, parsePerformanceEvents, prepareExhibitionPerformanceText } = require("./lib/performance-text");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -15,12 +24,16 @@ const PORT = process.env.PORT || 3000;
 const LOGS_DIR = process.env.GODFREY_LOGS_DIR
   ? path.resolve(process.env.GODFREY_LOGS_DIR)
   : path.join(__dirname, "logs");
+const GENERATED_AUDIO_DIR = path.join(__dirname, "public", "audio", "generated");
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
 const SESSION_SECRET =
   process.env.ADMIN_SESSION_SECRET || process.env.SESSION_SECRET || "dev-insecure-change-admin-session-secret";
 
 if (!fs.existsSync(LOGS_DIR)) {
   fs.mkdirSync(LOGS_DIR, { recursive: true });
+}
+if (!fs.existsSync(GENERATED_AUDIO_DIR)) {
+  fs.mkdirSync(GENERATED_AUDIO_DIR, { recursive: true });
 }
 const CLAUDE_TIMEOUT_MS = 20000;
 const NETWORK_RETRY_DELAY_MS = 1200;
@@ -48,7 +61,7 @@ Voice rules for this conversation:
 - Do not present bullet summaries unless explicitly requested.
 - Prefer lived recollection, concrete maritime detail, and guarded personal perspective.
 - Keep responses immersive and conversational, not encyclopedic.
-- Include brief stage directions in italics occasionally (no more than 1-2 per reply).`;
+- Include brief structured performer cues (square brackets and asterisks per PERFORMANCE DIRECTION) sparingly when they help Unreal performance — not as dense prose.`;
 const SOURCE_PRIORITY_ADDENDUM = `Source priority and factual accuracy rules:
 
 1) VERIFIED FACTS document (highest authority for hard facts)
@@ -85,8 +98,48 @@ const SYSTEM_PROMPT_PATH = path.join(__dirname, "system-prompt.json");
 const OPENAI_FILE_IDS_PATH = path.join(__dirname, "openai-file-ids.json");
 const PROVIDER_CONFIG_PATH = path.join(__dirname, "provider-config.json");
 const SPLASH_CONFIG_PATH = path.join(__dirname, "splash-config.json");
+const ELEVENLABS_CONFIG_PATH = path.join(__dirname, "elevenlabs-config.json");
+const RESPONSE_CONFIG_PATH = path.join(__dirname, "response-config.json");
+const ADMIN_TEST_CONFIG_PATH = path.join(__dirname, "admin-test-config.json");
+const ADMIN_BYPASS_AUDIO_DIR = path.join(__dirname, "public", "audio");
+const ADMIN_BYPASS_SAMPLE_MP3_PATH = path.join(ADMIN_BYPASS_AUDIO_DIR, "admin-bypass-sample.mp3");
+const ADMIN_BYPASS_DISPLAY_TEXT = "TEST MODE - Sample audio only";
+const ADMIN_BYPASS_SAMPLE_SPOKEN_TEXT =
+  "It is I, Captain John Godfrey, Master of the Georgette, husband of Joanna, father of six children and scapegoat for a sunken ship.";
+const DEFAULT_ADMIN_TEST_CONFIG = { bypassAi: false };
+
+if (!fs.existsSync(ADMIN_BYPASS_AUDIO_DIR)) {
+  fs.mkdirSync(ADMIN_BYPASS_AUDIO_DIR, { recursive: true });
+}
 const CAPTAIN_PORTRAIT_PATH = path.join(__dirname, "public", "images", "Captain Godfrey.png");
 const DEFAULT_SPLASH_SETTINGS = { t1Ms: 1000, t2Ms: 1000 };
+const DEFAULT_RESPONSE_SETTINGS = {
+  maxWords: Number.isFinite(Number(process.env.GODFREY_MAX_RESPONSE_WORDS))
+    ? Number(process.env.GODFREY_MAX_RESPONSE_WORDS)
+    : 120,
+};
+const DEFAULT_ELEVENLABS_SETTINGS = sanitizeElevenLabsSettings({
+  apiKey: process.env.ELEVENLABS_API_KEY || "",
+  voiceId: process.env.ELEVENLABS_VOICE_ID || "",
+  modelId: process.env.ELEVENLABS_MODEL_ID || ELEVENLABS_DEFAULT_MODEL_ID,
+  stability: process.env.ELEVENLABS_STABILITY || 0.5,
+  similarityBoost: process.env.ELEVENLABS_SIMILARITY_BOOST || 0.75,
+  speakerBoost: process.env.ELEVENLABS_SPEAKER_BOOST !== "false",
+});
+
+/** FIFO exhibition segments for Unreal: one requestId per sentence/clause clip. */
+let exhibitionUnrealTtsQueue = null;
+const EXHIBITION_UNREAL_TTS_TTL_MS = Number.isFinite(Number(process.env.GODFREY_EXHIBITION_UNREAL_TTS_TTL_MS))
+  ? Math.max(10_000, Number(process.env.GODFREY_EXHIBITION_UNREAL_TTS_TTL_MS))
+  : 180_000;
+
+/** Fixed sample for GET /api/admin/performance-cues-selftest (parse vs strip sanity check). */
+const ADMIN_PERFORMANCE_CUE_SELFTEST_TEXT = `[thinking]
+[serious]
+[short pause]
+*looks down*
+*leans forward slightly*
+We hold to our course.`;
 
 function loadFileIds() {
   const fileIdsPath = path.join(__dirname, "file-ids.json");
@@ -182,6 +235,200 @@ function loadSplashSettings() {
     console.error("Unable to read splash-config.json, using defaults:", error.message);
     return { ...DEFAULT_SPLASH_SETTINGS };
   }
+}
+
+function saveElevenLabsSettings(settings) {
+  fs.writeFileSync(ELEVENLABS_CONFIG_PATH, JSON.stringify(settings, null, 2));
+}
+
+function loadElevenLabsSettings() {
+  if (!fs.existsSync(ELEVENLABS_CONFIG_PATH)) {
+    saveElevenLabsSettings(DEFAULT_ELEVENLABS_SETTINGS);
+    return { ...DEFAULT_ELEVENLABS_SETTINGS };
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(ELEVENLABS_CONFIG_PATH, "utf-8"));
+    return sanitizeElevenLabsSettings({
+      ...DEFAULT_ELEVENLABS_SETTINGS,
+      ...parsed,
+    });
+  } catch (error) {
+    console.error("Unable to read elevenlabs-config.json, using defaults:", error.message);
+    return { ...DEFAULT_ELEVENLABS_SETTINGS };
+  }
+}
+
+function sanitizeResponseSettings(input) {
+  const rawMaxWords = Number(input?.maxWords);
+  const maxWords = Number.isFinite(rawMaxWords) ? Math.max(10, Math.min(1000, Math.round(rawMaxWords))) : DEFAULT_RESPONSE_SETTINGS.maxWords;
+  return { maxWords };
+}
+
+function saveResponseSettings(settings) {
+  fs.writeFileSync(RESPONSE_CONFIG_PATH, JSON.stringify(settings, null, 2));
+}
+
+function loadResponseSettings() {
+  if (!fs.existsSync(RESPONSE_CONFIG_PATH)) {
+    const sanitizedDefault = sanitizeResponseSettings(DEFAULT_RESPONSE_SETTINGS);
+    saveResponseSettings(sanitizedDefault);
+    return sanitizedDefault;
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(RESPONSE_CONFIG_PATH, "utf-8"));
+    return sanitizeResponseSettings(parsed);
+  } catch (error) {
+    console.error("Unable to read response-config.json, using defaults:", error.message);
+    return sanitizeResponseSettings(DEFAULT_RESPONSE_SETTINGS);
+  }
+}
+
+function sanitizeAdminTestConfig(input) {
+  return {
+    bypassAi: input?.bypassAi === true,
+    sampleGeneratedAt:
+      typeof input?.sampleGeneratedAt === "string" && input.sampleGeneratedAt.trim()
+        ? input.sampleGeneratedAt.trim()
+        : null,
+    sampleSourceText:
+      typeof input?.sampleSourceText === "string" && input.sampleSourceText.trim()
+        ? input.sampleSourceText.trim()
+        : ADMIN_BYPASS_SAMPLE_SPOKEN_TEXT,
+  };
+}
+
+function saveAdminTestConfig(settings) {
+  fs.writeFileSync(ADMIN_TEST_CONFIG_PATH, JSON.stringify(settings, null, 2));
+}
+
+function loadAdminTestConfig() {
+  if (!fs.existsSync(ADMIN_TEST_CONFIG_PATH)) {
+    const sanitizedDefault = sanitizeAdminTestConfig(DEFAULT_ADMIN_TEST_CONFIG);
+    saveAdminTestConfig(sanitizedDefault);
+    return sanitizedDefault;
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(ADMIN_TEST_CONFIG_PATH, "utf-8"));
+    return sanitizeAdminTestConfig(parsed);
+  } catch (error) {
+    console.error("Unable to read admin-test-config.json, using defaults:", error.message);
+    return sanitizeAdminTestConfig(DEFAULT_ADMIN_TEST_CONFIG);
+  }
+}
+
+function adminBypassSampleAudioReady() {
+  try {
+    return fs.existsSync(ADMIN_BYPASS_SAMPLE_MP3_PATH) && fs.statSync(ADMIN_BYPASS_SAMPLE_MP3_PATH).size > 0;
+  } catch {
+    return false;
+  }
+}
+
+function buildAdminTestConfigResponse() {
+  return {
+    ...adminTestConfig,
+    sampleAudioReady: adminBypassSampleAudioReady(),
+    sampleAudioUrl: adminBypassSampleAudioReady() ? "/audio/admin-bypass-sample.mp3" : null,
+    displayText: ADMIN_BYPASS_DISPLAY_TEXT,
+    sampleSpokenText: ADMIN_BYPASS_SAMPLE_SPOKEN_TEXT,
+  };
+}
+
+async function ensureAdminBypassSampleAudio() {
+  if (adminBypassSampleAudioReady()) {
+    return ADMIN_BYPASS_SAMPLE_MP3_PATH;
+  }
+  if (!elevenLabsSettings.apiKey) {
+    throw new Error("ElevenLabs API key is not configured (required to generate admin bypass sample audio).");
+  }
+  if (!elevenLabsSettings.voiceId) {
+    throw new Error("ElevenLabs voice ID is not configured (required to generate admin bypass sample audio).");
+  }
+
+  console.log("ADMIN_BYPASS_SAMPLE_GENERATING", { textLength: ADMIN_BYPASS_SAMPLE_SPOKEN_TEXT.length });
+  const mp3Result = await synthesizeElevenLabs({
+    text: ADMIN_BYPASS_SAMPLE_SPOKEN_TEXT,
+    settings: elevenLabsSettings,
+    outputFormat: "mp3_44100_128",
+    accept: "audio/mpeg",
+  });
+  fs.writeFileSync(ADMIN_BYPASS_SAMPLE_MP3_PATH, mp3Result.audioBuffer);
+  adminTestConfig = sanitizeAdminTestConfig({
+    ...adminTestConfig,
+    sampleGeneratedAt: new Date().toISOString(),
+    sampleSourceText: ADMIN_BYPASS_SAMPLE_SPOKEN_TEXT,
+  });
+  saveAdminTestConfig(adminTestConfig);
+  console.log("ADMIN_BYPASS_SAMPLE_SAVED", {
+    path: ADMIN_BYPASS_SAMPLE_MP3_PATH,
+    bytes: mp3Result.audioBuffer.length,
+  });
+  return ADMIN_BYPASS_SAMPLE_MP3_PATH;
+}
+
+function buildAdminBypassChatPayload(req, sanitizedMessages, incomingLogId) {
+  let activeLogFile = null;
+  try {
+    activeLogFile = writeChatExchangeLog(
+      req,
+      sanitizedMessages,
+      incomingLogId,
+      `${ADMIN_BYPASS_DISPLAY_TEXT}\n\n[Admin test bypass — AI skipped.]`
+    );
+  } catch (logErr) {
+    console.error("Session log write failed:", logErr);
+  }
+  return {
+    response: ADMIN_BYPASS_DISPLAY_TEXT,
+    truncated: false,
+    logSessionId: activeLogFile,
+    adminTestBypass: true,
+    adminBypassAudioUrl: "/audio/admin-bypass-sample.mp3",
+  };
+}
+
+async function respondWithAdminBypassIfEnabled(req, res, sanitizedMessages, incomingLogId) {
+  if (!adminTestConfig.bypassAi) {
+    return false;
+  }
+  try {
+    await ensureAdminBypassSampleAudio();
+  } catch (error) {
+    console.error("Admin bypass sample audio failed:", error);
+    res.status(500).json({
+      error: error?.message || "Failed to prepare admin bypass sample audio.",
+    });
+    return true;
+  }
+  console.log("ADMIN_TEST_BYPASS_CHAT", {
+    outputTarget: parseOutputTargetFromBody(req.body),
+    requestId: req.body?.requestId || null,
+  });
+  res.json(enrichChatResponseForExhibition(req, buildAdminBypassChatPayload(req, sanitizedMessages, incomingLogId)));
+  return true;
+}
+
+function estimateTokenBudgetFromWordLimit(maxWords) {
+  const requested = Math.round(Number(maxWords) * 2.2);
+  return Math.max(32, Math.min(MAX_RESPONSE_TOKENS, Number.isFinite(requested) ? requested : MAX_RESPONSE_TOKENS));
+}
+
+function limitResponseToWordCount(text, maxWords) {
+  const normalized = typeof text === "string" ? text.trim() : "";
+  if (!normalized) {
+    return { text: "", wasLimited: false };
+  }
+
+  const words = normalized.split(/\s+/);
+  if (words.length <= maxWords) {
+    return { text: normalized, wasLimited: false };
+  }
+
+  const limitedText = `${words.slice(0, maxWords).join(" ")}\n\n[Reply limited to ${maxWords} words by admin setting.]`;
+  return { text: limitedText, wasLimited: true };
 }
 
 async function callClaudeWithTimeout(requestParams) {
@@ -333,6 +580,9 @@ const openaiConfig = loadOpenAIConfig();
 let currentSystemPrompt = SYSTEM_PROMPT_TEXT;
 let currentProvider = DEFAULT_PROVIDER;
 let splashSettings = { ...DEFAULT_SPLASH_SETTINGS };
+let elevenLabsSettings = { ...DEFAULT_ELEVENLABS_SETTINGS };
+let responseSettings = sanitizeResponseSettings(DEFAULT_RESPONSE_SETTINGS);
+let adminTestConfig = sanitizeAdminTestConfig(DEFAULT_ADMIN_TEST_CONFIG);
 
 function saveSystemPrompt(promptText) {
   fs.writeFileSync(SYSTEM_PROMPT_PATH, JSON.stringify({ prompt: promptText }, null, 2));
@@ -359,6 +609,9 @@ function loadSystemPrompt() {
 
 currentSystemPrompt = loadSystemPrompt();
 splashSettings = loadSplashSettings();
+elevenLabsSettings = loadElevenLabsSettings();
+responseSettings = loadResponseSettings();
+adminTestConfig = loadAdminTestConfig();
 
 const LOG_FILENAME_RE = /^session-[0-9TZa-z.-]+-[a-f0-9]{16}\.json$/;
 
@@ -397,6 +650,612 @@ function perthFilenameStamp(date = new Date()) {
   const parts = perthWallClockParts(date);
   const g = (t) => parts.find((p) => p.type === t)?.value ?? "";
   return `${g("year")}-${g("month")}-${g("day")}T${g("hour")}-${g("minute")}-${g("second")}`;
+}
+
+function compactPerthFilenameStamp(date = new Date()) {
+  const parts = perthWallClockParts(date);
+  const g = (t) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${g("year")}${g("month")}${g("day")}-${g("hour")}${g("minute")}${g("second")}`;
+}
+
+function createAbsoluteUrl(req, pathname) {
+  const protocol = req.protocol || "http";
+  const host = req.get("host") || `localhost:${PORT}`;
+  return `${protocol}://${host}${pathname}`;
+}
+
+function buildGeneratedAudioFilename(ext) {
+  const id = crypto.randomBytes(6).toString("hex");
+  return `godfrey-response-${compactPerthFilenameStamp()}-${id}.${ext}`;
+}
+
+const SUPPORTED_ELEVENLABS_PCM_SAMPLE_RATES = [16000, 22050, 24000, 44100];
+
+function parseAndValidatePcmSampleRate(requestedSampleRate) {
+  const parsed = Number.parseInt(requestedSampleRate, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error("sampleRate must be a positive integer.");
+  }
+  if (!SUPPORTED_ELEVENLABS_PCM_SAMPLE_RATES.includes(parsed)) {
+    throw new Error(
+      `Unsupported sampleRate ${parsed}. Supported PCM sample rates: ${SUPPORTED_ELEVENLABS_PCM_SAMPLE_RATES.join(", ")}.`
+    );
+  }
+  return parsed;
+}
+
+function parseAndValidateNumChannels(requestedChannels) {
+  const parsed = Number.parseInt(requestedChannels, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error("numChannels must be a positive integer.");
+  }
+  if (parsed !== 1) {
+    throw new Error("Only mono PCM is supported for /api/godfrey/speak/stream-pcm. Set numChannels=1.");
+  }
+  return parsed;
+}
+
+/**
+ * PCM s16le frame size (bytes) using the smallest 10/20/40/50/100 ms window that yields
+ * an integer sample count. Reduces misaligned tails when streaming to lip-sync runtimes.
+ */
+function pcmS16leAlignedFrameBytes(sampleRate, numChannels) {
+  const bytesPerSample = numChannels * 2;
+  for (const ms of [10, 20, 40, 50, 100]) {
+    const samples = (sampleRate * ms) / 1000;
+    if (Number.isInteger(samples) && samples > 0) {
+      return samples * bytesPerSample;
+    }
+  }
+  return bytesPerSample;
+}
+
+function firstBytesHex(buffer, count = 16) {
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
+    return "";
+  }
+  return buffer.subarray(0, Math.min(count, buffer.length)).toString("hex");
+}
+
+/** Shared keep-alive dispatcher for fetch (loopback chat + ElevenLabs) to cut TLS/TCP warm-up on repeat calls. */
+let godfreyFetchDispatcher;
+function getGodfreyFetchDispatcher() {
+  if (godfreyFetchDispatcher !== undefined) {
+    return godfreyFetchDispatcher;
+  }
+  try {
+    const { Agent } = require("undici");
+    godfreyFetchDispatcher = new Agent({
+      connect: { timeout: 60_000 },
+      keepAliveTimeout: 60_000,
+      keepAliveMaxTimeout: 60_000,
+      connections: 8,
+    });
+  } catch {
+    godfreyFetchDispatcher = null;
+  }
+  return godfreyFetchDispatcher;
+}
+
+/** Default 80ms so clients receive PCM bytes immediately; set GODFREY_STREAM_PCM_LEAD_SILENCE_MS=0 to disable. */
+function parseStreamPcmLeadSilenceMs() {
+  const leadEnv = process.env.GODFREY_STREAM_PCM_LEAD_SILENCE_MS;
+  if (leadEnv === undefined || leadEnv === "") {
+    return 80;
+  }
+  const n = Number.parseInt(String(leadEnv), 10);
+  if (!Number.isFinite(n)) {
+    return 80;
+  }
+  return Math.max(0, Math.min(500, n));
+}
+
+/** ~100 ms of PCM at 16 kHz mono s16le; split writes so clients receive incremental chunks. */
+const STREAM_PCM_MAX_WRITE_BYTES = 3200;
+
+async function runCommand(command, args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { windowsHide: true });
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      resolve({ code, stdout, stderr });
+    });
+  });
+}
+
+async function getMediaDurationSeconds(filePath) {
+  const ffprobeArgs = [
+    "-v",
+    "error",
+    "-show_entries",
+    "format=duration",
+    "-of",
+    "default=noprint_wrappers=1:nokey=1",
+    filePath,
+  ];
+  try {
+    const ffprobeResult = await runCommand("ffprobe", ffprobeArgs);
+    if (ffprobeResult.code !== 0) {
+      throw new Error(ffprobeResult.stderr || "ffprobe failed.");
+    }
+    const parsed = Number.parseFloat(ffprobeResult.stdout.trim());
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      throw new Error(`Invalid media duration: ${ffprobeResult.stdout.trim()}`);
+    }
+    return parsed;
+  } catch {
+    const ffmpegProbeResult = await runCommand("ffmpeg", ["-i", filePath]);
+    const durationText = ffmpegProbeResult.stderr || "";
+    const match = durationText.match(/Duration:\s*(\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)/i);
+    if (!match) {
+      throw new Error("Unable to read media duration via ffprobe or ffmpeg.");
+    }
+    const hours = Number.parseInt(match[1], 10);
+    const minutes = Number.parseInt(match[2], 10);
+    const seconds = Number.parseFloat(match[3]);
+    const totalSeconds = hours * 3600 + minutes * 60 + seconds;
+    if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) {
+      throw new Error(`Invalid media duration parsed from ffmpeg: ${match[0]}`);
+    }
+    return totalSeconds;
+  }
+}
+
+async function convertMp3ToPcmWav({ mp3Path, wavPath }) {
+  const ffmpegArgs = ["-y", "-i", mp3Path, "-ac", "1", "-ar", "48000", "-c:a", "pcm_s16le", wavPath];
+  const ffmpegResult = await runCommand("ffmpeg", ffmpegArgs);
+  if (ffmpegResult.code !== 0) {
+    const err = new Error("ffmpeg conversion failed.");
+    err.stderr = ffmpegResult.stderr;
+    throw err;
+  }
+  return ffmpegResult;
+}
+
+/**
+ * Streams ElevenLabs PCM body to an Express response whose headers were already flushed.
+ * Buffers to frame-aligned PCM, then writes in sub-chunks (STREAM_PCM_MAX_WRITE_BYTES) for incremental receive.
+ */
+async function streamElevenLabsPcmToRes(res, { text, settings, sampleRate, numChannels, timing, pcmBytesCounter }) {
+  if (!settings.apiKey) {
+    throw new Error("ElevenLabs API key is not configured.");
+  }
+  if (!settings.voiceId) {
+    throw new Error("ElevenLabs voice ID is not configured.");
+  }
+
+  const performanceText = String(text || "").trim();
+  if (!performanceText) {
+    throw new Error("text must be a non-empty string");
+  }
+
+  const spokenText = stripPerformanceCues(performanceText);
+  const clampedSpoken = spokenText.slice(0, 4096).trim();
+  if (!clampedSpoken) {
+    throw new Error("After removing performance cues, no spoken text remains for ElevenLabs.");
+  }
+
+  console.log("PERFORMANCE_TEXT_FOR_UNREAL", performanceText);
+  console.log("SPOKEN_TEXT_FOR_ELEVENLABS", clampedSpoken);
+  console.log("PERFORMANCE_EVENTS_PARSED", JSON.stringify(parsePerformanceEvents(performanceText)));
+
+  const outputFormat = `pcm_${sampleRate}`;
+  const endpointUrl = new URL(
+    `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(settings.voiceId)}/stream`
+  );
+  endpointUrl.searchParams.set("output_format", outputFormat);
+  endpointUrl.searchParams.set("optimize_streaming_latency", "4");
+
+  console.log("stream-pcm ElevenLabs TTS", {
+    performanceTextLength: performanceText.length,
+    spokenTextLength: clampedSpoken.length,
+    spokenTextPreview: clampedSpoken.slice(0, 240),
+    selectedSampleRate: sampleRate,
+    selectedChannels: numChannels,
+  });
+
+  const dispatcher = getGodfreyFetchDispatcher();
+  const elevenResponse = await fetch(endpointUrl, {
+    method: "POST",
+    headers: {
+      Accept: "audio/pcm",
+      "Content-Type": "application/json",
+      "xi-api-key": settings.apiKey,
+    },
+    body: JSON.stringify({
+      text: clampedSpoken,
+      model_id: settings.modelId || ELEVENLABS_DEFAULT_MODEL_ID,
+      output_format: outputFormat,
+      voice_settings: {
+        stability: settings.stability,
+        similarity_boost: settings.similarityBoost,
+        use_speaker_boost: Boolean(settings.speakerBoost),
+      },
+    }),
+    ...(dispatcher ? { dispatcher } : {}),
+  });
+
+  if (!elevenResponse.ok || !elevenResponse.body) {
+    const details = await elevenResponse.text().catch(() => "");
+    throw new Error(`ElevenLabs streaming request failed (${elevenResponse.status}): ${details || elevenResponse.statusText}`);
+  }
+
+  const elevenContentType = String(elevenResponse.headers.get("content-type") || "").toLowerCase();
+  console.log("ElevenLabs stream response format", {
+    requestedOutputFormat: outputFormat,
+    contentType: elevenContentType || "unknown",
+  });
+
+  const isLikelyPcm =
+    elevenContentType.includes("audio/pcm") ||
+    elevenContentType.includes("application/octet-stream") ||
+    elevenContentType.includes("audio/l16");
+
+  if (!isLikelyPcm) {
+    throw new Error(
+      `ElevenLabs returned non-PCM stream content-type '${elevenContentType || "unknown"}'. Refusing fallback decode.`
+    );
+  }
+
+  const frameBytes = pcmS16leAlignedFrameBytes(sampleRate, numChannels);
+  const writeStepBytes = Math.max(frameBytes, Math.floor(STREAM_PCM_MAX_WRITE_BYTES / frameBytes) * frameBytes);
+
+  let totalPcmBytes = 0;
+  let loggedFirstBytes = false;
+  let firstPcmTimingLogged = false;
+  let carry = Buffer.alloc(0);
+
+  const writeAlignedSlice = async (sub) => {
+    if (!Buffer.isBuffer(sub) || sub.length === 0) {
+      return;
+    }
+    if (!firstPcmTimingLogged) {
+      firstPcmTimingLogged = true;
+      timing?.log?.("first_pcm_write", { totalPcmBytesSoFar: totalPcmBytes, frameBytes, writeStepBytes });
+    }
+    if (!loggedFirstBytes) {
+      loggedFirstBytes = true;
+      console.log("First PCM bytes sent", {
+        hex: firstBytesHex(sub, 24),
+        count: Math.min(24, sub.length),
+        frameBytes,
+      });
+    }
+    totalPcmBytes += sub.length;
+    if (pcmBytesCounter) {
+      pcmBytesCounter.n += sub.length;
+    }
+    if (!res.write(sub)) {
+      await new Promise((resolve) => res.once("drain", resolve));
+    }
+  };
+
+  const flushCarry = async () => {
+    const alignedLen = Math.floor(carry.length / frameBytes) * frameBytes;
+    if (alignedLen === 0) {
+      return;
+    }
+    const slice = carry.subarray(0, alignedLen);
+    carry = carry.subarray(alignedLen);
+    for (let offset = 0; offset < slice.length; offset += writeStepBytes) {
+      const end = Math.min(offset + writeStepBytes, slice.length);
+      const sub = slice.subarray(offset, end);
+      // eslint-disable-next-line no-await-in-loop
+      await writeAlignedSlice(sub);
+    }
+  };
+
+  const appendPcm = async (chunk) => {
+    if (!Buffer.isBuffer(chunk) || chunk.length === 0) {
+      return;
+    }
+    carry = carry.length === 0 ? chunk : Buffer.concat([carry, chunk]);
+    // eslint-disable-next-line no-await-in-loop
+    await flushCarry();
+  };
+
+  const sourceNodeStream = Readable.fromWeb(elevenResponse.body, { highWaterMark: STREAM_PCM_MAX_WRITE_BYTES });
+
+  for await (const chunk of sourceNodeStream) {
+    const pcmChunk = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    // eslint-disable-next-line no-await-in-loop
+    await appendPcm(pcmChunk);
+  }
+
+  if (carry.length > 0) {
+    const pad = (frameBytes - (carry.length % frameBytes)) % frameBytes;
+    carry = pad === 0 ? carry : Buffer.concat([carry, Buffer.alloc(pad, 0)]);
+    // eslint-disable-next-line no-await-in-loop
+    await flushCarry();
+  }
+
+  res.end();
+  timing?.log?.("last_pcm_write", { totalPcmBytes });
+  console.log("Total PCM bytes sent", { totalPcmBytes });
+}
+
+async function streamMp3FileAsPcmToRes(res, { mp3Path, sampleRate, numChannels, timing, pcmBytesCounter }) {
+  if (!mp3Path || !fs.existsSync(mp3Path)) {
+    throw new Error("Admin bypass sample MP3 is missing.");
+  }
+
+  console.log("stream-pcm admin bypass sample", { mp3Path, sampleRate, numChannels });
+
+  const frameBytes = pcmS16leAlignedFrameBytes(sampleRate, numChannels);
+  const writeStepBytes = Math.max(frameBytes, Math.floor(STREAM_PCM_MAX_WRITE_BYTES / frameBytes) * frameBytes);
+  let totalPcmBytes = 0;
+  let loggedFirstBytes = false;
+  let firstPcmTimingLogged = false;
+  let carry = Buffer.alloc(0);
+
+  const writeAlignedSlice = async (sub) => {
+    if (!Buffer.isBuffer(sub) || sub.length === 0) {
+      return;
+    }
+    if (!firstPcmTimingLogged) {
+      firstPcmTimingLogged = true;
+      timing?.log?.("first_pcm_write", { totalPcmBytesSoFar: totalPcmBytes, frameBytes, writeStepBytes, adminBypassSample: true });
+    }
+    if (!loggedFirstBytes) {
+      loggedFirstBytes = true;
+      console.log("First PCM bytes sent (admin bypass sample)", {
+        hex: firstBytesHex(sub, 24),
+        count: Math.min(24, sub.length),
+        frameBytes,
+      });
+    }
+    totalPcmBytes += sub.length;
+    if (pcmBytesCounter) {
+      pcmBytesCounter.n += sub.length;
+    }
+    if (!res.write(sub)) {
+      await new Promise((resolve) => res.once("drain", resolve));
+    }
+  };
+
+  const flushCarry = async () => {
+    const alignedLen = Math.floor(carry.length / frameBytes) * frameBytes;
+    if (alignedLen === 0) {
+      return;
+    }
+    const slice = carry.subarray(0, alignedLen);
+    carry = carry.subarray(alignedLen);
+    for (let offset = 0; offset < slice.length; offset += writeStepBytes) {
+      const end = Math.min(offset + writeStepBytes, slice.length);
+      const sub = slice.subarray(offset, end);
+      // eslint-disable-next-line no-await-in-loop
+      await writeAlignedSlice(sub);
+    }
+  };
+
+  const appendPcm = async (chunk) => {
+    if (!Buffer.isBuffer(chunk) || chunk.length === 0) {
+      return;
+    }
+    carry = carry.length === 0 ? chunk : Buffer.concat([carry, chunk]);
+    // eslint-disable-next-line no-await-in-loop
+    await flushCarry();
+  };
+
+  const ffmpegArgs = [
+    "-nostdin",
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-i",
+    mp3Path,
+    "-f",
+    "s16le",
+    "-acodec",
+    "pcm_s16le",
+    "-ac",
+    String(numChannels),
+    "-ar",
+    String(sampleRate),
+    "pipe:1",
+  ];
+
+  await new Promise((resolve, reject) => {
+    const child = spawn("ffmpeg", ffmpegArgs, { windowsHide: true });
+    let stderr = "";
+
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.stdout.on("data", (chunk) => {
+      child.stdout.pause();
+      appendPcm(Buffer.from(chunk))
+        .then(() => child.stdout.resume())
+        .catch(reject);
+    });
+    child.on("error", reject);
+    child.on("close", async (code) => {
+      if (code !== 0) {
+        reject(new Error(`ffmpeg PCM conversion failed (${code}): ${stderr.trim() || "unknown error"}`));
+        return;
+      }
+      try {
+        if (carry.length > 0) {
+          const pad = (frameBytes - (carry.length % frameBytes)) % frameBytes;
+          carry = pad === 0 ? carry : Buffer.concat([carry, Buffer.alloc(pad, 0)]);
+          await flushCarry();
+        }
+        resolve();
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+
+  res.end();
+  timing?.log?.("last_pcm_write", { totalPcmBytes, adminBypassSample: true });
+  console.log("Total PCM bytes sent (admin bypass sample)", { totalPcmBytes });
+}
+
+async function transcribeAudioWithOpenAI({ audioBuffer, mimeType }) {
+  if (!openai) {
+    throw new Error("OPENAI_API_KEY is not configured for speech-to-text.");
+  }
+  if (!audioBuffer || !Buffer.isBuffer(audioBuffer) || audioBuffer.length === 0) {
+    throw new Error("Audio upload is empty.");
+  }
+  const stream = Readable.from(audioBuffer);
+  stream.path = `unreal-input.${mimeType?.includes("wav") ? "wav" : "webm"}`;
+  const result = await openai.audio.transcriptions.create({
+    file: stream,
+    model: "gpt-4o-mini-transcribe",
+  });
+  const text = typeof result?.text === "string" ? result.text.trim() : "";
+  if (!text) {
+    throw new Error("Speech-to-text returned no transcript.");
+  }
+  return text;
+}
+
+async function askGodfreyViaExistingPipeline({ messages, includeDocuments, logSessionId, maxWords }) {
+  const dispatcher = getGodfreyFetchDispatcher();
+  const body = {
+    messages,
+    includeDocuments,
+    logSessionId,
+    outputTarget: "browser",
+  };
+  if (maxWords !== undefined && maxWords !== null && Number.isFinite(Number(maxWords))) {
+    body.maxWords = Number(maxWords);
+  }
+  const chatUrl = `http://127.0.0.1:${PORT}/api/chat`;
+  const response = await fetch(chatUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Godfrey-Internal": "pipeline",
+    },
+    body: JSON.stringify(body),
+    ...(dispatcher ? { dispatcher } : {}),
+  });
+  const rawText = await response.text();
+  let payload;
+  try {
+    payload = rawText ? JSON.parse(rawText) : {};
+  } catch {
+    throw new Error(
+      `Chat pipeline returned non-JSON (${response.status}): ${String(rawText).slice(0, 300)}`
+    );
+  }
+  if (!response.ok) {
+    const err = new Error(payload?.error || payload?.details || "Chat pipeline failed.");
+    err.payload = payload;
+    throw err;
+  }
+  return payload;
+}
+
+function parseOutputTargetFromBody(body) {
+  const raw = typeof body?.outputTarget === "string" ? body.outputTarget.trim().toLowerCase() : "";
+  if (raw === "browser" || raw === "unreal") {
+    return raw;
+  }
+  const env = String(process.env.GODFREY_DEFAULT_OUTPUT_TARGET || "").trim().toLowerCase();
+  if (env === "browser" || env === "unreal") {
+    return env;
+  }
+  return "browser";
+}
+
+function getFreshExhibitionUnrealTtsQueue() {
+  if (!exhibitionUnrealTtsQueue) {
+    return null;
+  }
+  if (Date.now() - exhibitionUnrealTtsQueue.createdAt > EXHIBITION_UNREAL_TTS_TTL_MS) {
+    exhibitionUnrealTtsQueue = null;
+    return null;
+  }
+  if (!exhibitionUnrealTtsQueue.requestId || typeof exhibitionUnrealTtsQueue.performanceText !== "string") {
+    exhibitionUnrealTtsQueue = null;
+    return null;
+  }
+  return exhibitionUnrealTtsQueue;
+}
+
+function consumeExhibitionUnrealTtsQueue(requestId) {
+  const q = getFreshExhibitionUnrealTtsQueue();
+  if (!q || q.requestId !== requestId) {
+    return null;
+  }
+  const consumedEvents = Array.isArray(q.performanceEvents)
+    ? q.performanceEvents
+    : parsePerformanceEvents(q.performanceText);
+  console.log("CONSUMED_PERFORMANCE_TEXT_FOR_TTS", q.performanceText);
+  console.log("CONSUMED_PERFORMANCE_EVENTS_IF_AVAILABLE", JSON.stringify(consumedEvents));
+  console.log("exhibition unreal TTS consumed", {
+    requestId,
+    adminTestBypass: Boolean(q.adminTestBypass),
+  });
+  const consumed = {
+    performanceText: q.performanceText,
+    adminTestBypass: Boolean(q.adminTestBypass),
+  };
+  exhibitionUnrealTtsQueue = null;
+  return consumed;
+}
+
+function enrichChatResponseForExhibition(req, payload) {
+  if (req.get("X-Godfrey-Internal") === "pipeline") {
+    return payload;
+  }
+  const outputTarget = parseOutputTargetFromBody(req.body);
+  const voiceInteraction = req.body?.voiceInteraction === true;
+  let requestId = typeof req.body?.requestId === "string" && req.body.requestId.trim() ? req.body.requestId.trim() : "";
+  if (outputTarget === "unreal" && !requestId) {
+    requestId = crypto.randomUUID();
+  }
+  const base = {
+    ...payload,
+    outputTarget,
+    voiceInteraction,
+    requestId: requestId || null,
+  };
+  if (outputTarget !== "unreal") {
+    return base;
+  }
+  const assistantText = typeof payload.response === "string" ? payload.response : "";
+  if (!requestId || !assistantText) {
+    return base;
+  }
+  const preparedText = prepareExhibitionPerformanceText(assistantText);
+  console.log("EXHIBITION_QUEUE_PERFORMANCE_TEXT", preparedText);
+  exhibitionUnrealTtsQueue = {
+    requestId,
+    performanceText: preparedText,
+    performanceEvents: parsePerformanceEvents(preparedText),
+    adminTestBypass: payload.adminTestBypass === true,
+    createdAt: Date.now(),
+  };
+  console.log("exhibition unreal TTS queued for StreamGodfreySpeechToAudio", {
+    requestId,
+    performanceChars: preparedText.length,
+    performanceEventCount: exhibitionUnrealTtsQueue.performanceEvents.length,
+    adminTestBypass: exhibitionUnrealTtsQueue.adminTestBypass,
+  });
+  return {
+    ...base,
+    unrealTts: {
+      queued: true,
+      requestId,
+      statusUrl: "/api/exhibition/unreal-tts-status",
+      streamPcmHint:
+        "POST /api/godfrey/speak/stream-pcm JSON with ttsOnly:true, requestId, sampleRate, numChannels (same as before).",
+    },
+  };
 }
 
 function isValidLogFilename(name) {
@@ -506,20 +1365,72 @@ if (configuredProvider === "openai" && providerAvailability.openai) {
 }
 
 app.use(express.json({ limit: "1mb" }));
-app.use(
-  session({
-    name: "godfrey.admin.sid",
-    secret: SESSION_SECRET,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    },
-  })
-);
+app.use("/api/unreal", (req, res, next) => {
+  const allowOrigin = req.headers.origin || "*";
+  res.setHeader("Access-Control-Allow-Origin", allowOrigin);
+  res.setHeader("Vary", "Origin");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (req.method === "OPTIONS") {
+    return res.status(204).end();
+  }
+  return next();
+});
+
+app.use("/api/exhibition", (req, res, next) => {
+  const allowOrigin = req.headers.origin || "*";
+  res.setHeader("Access-Control-Allow-Origin", allowOrigin);
+  res.setHeader("Vary", "Origin");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (req.method === "OPTIONS") {
+    return res.status(204).end();
+  }
+  return next();
+});
+
+app.get("/api/exhibition/unreal-tts-status", (req, res) => {
+  const q = getFreshExhibitionUnrealTtsQueue();
+  if (!q) {
+    return res.json({
+      ready: false,
+      requestId: null,
+      ttlMs: EXHIBITION_UNREAL_TTS_TTL_MS,
+    });
+  }
+  const performanceEvents = Array.isArray(q.performanceEvents)
+    ? q.performanceEvents
+    : parsePerformanceEvents(q.performanceText);
+  console.log("UNREAL_STATUS_PERFORMANCE_TEXT", q.performanceText);
+  console.log("UNREAL_STATUS_PERFORMANCE_EVENTS", JSON.stringify(performanceEvents));
+  return res.json({
+    ready: true,
+    requestId: q.requestId,
+    assistantCharCount: q.performanceText.length,
+    ageMs: Date.now() - q.createdAt,
+    ttlMs: EXHIBITION_UNREAL_TTS_TTL_MS,
+    performanceEvents,
+  });
+});
+const sessionMiddleware = session({
+  name: "godfrey.admin.sid",
+  secret: SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  },
+});
+
+app.use((req, res, next) => {
+  if (req.method === "POST" && req.path === "/api/godfrey/speak/stream-pcm") {
+    return next();
+  }
+  return sessionMiddleware(req, res, next);
+});
 app.use(
   express.static(path.join(__dirname, "public"), {
     setHeaders: (res, filePath) => {
@@ -563,6 +1474,10 @@ app.get("/api/splash-settings", (req, res) => {
   return res.json(splashSettings);
 });
 
+app.get("/api/test-bypass-active", (req, res) => {
+  return res.json({ bypassAi: adminTestConfig.bypassAi === true });
+});
+
 app.post("/api/admin/splash-settings", requireAdmin, (req, res) => {
   const updated = sanitizeSplashSettings(req.body || {});
   splashSettings = updated;
@@ -573,6 +1488,54 @@ app.post("/api/admin/splash-settings", requireAdmin, (req, res) => {
     return res.status(500).json({ error: "Splash settings changed in memory but could not be saved to disk." });
   }
   return res.json(updated);
+});
+
+app.get("/api/admin/response-settings", requireAdmin, (req, res) => {
+  return res.json(responseSettings);
+});
+
+app.post("/api/admin/response-settings", requireAdmin, (req, res) => {
+  const updated = sanitizeResponseSettings(req.body || {});
+  responseSettings = updated;
+  try {
+    saveResponseSettings(updated);
+  } catch (error) {
+    console.error("Failed to save response-config.json:", error);
+    return res.status(500).json({ error: "Response settings changed in memory but could not be saved to disk." });
+  }
+  return res.json(updated);
+});
+
+app.get("/api/admin/test-bypass-settings", requireAdmin, (req, res) => {
+  return res.json(buildAdminTestConfigResponse());
+});
+
+app.post("/api/admin/test-bypass-settings", requireAdmin, async (req, res) => {
+  const updated = sanitizeAdminTestConfig({
+    ...adminTestConfig,
+    bypassAi: req.body?.bypassAi === true,
+  });
+  adminTestConfig = updated;
+  try {
+    saveAdminTestConfig(updated);
+  } catch (error) {
+    console.error("Failed to save admin-test-config.json:", error);
+    return res.status(500).json({ error: "Test bypass settings changed in memory but could not be saved to disk." });
+  }
+
+  if (updated.bypassAi) {
+    try {
+      await ensureAdminBypassSampleAudio();
+    } catch (error) {
+      console.error("Failed to ensure admin bypass sample on save:", error);
+      return res.status(500).json({
+        error: error?.message || "Bypass enabled but sample audio could not be generated.",
+        ...buildAdminTestConfigResponse(),
+      });
+    }
+  }
+
+  return res.json(buildAdminTestConfigResponse());
 });
 
 app.get("/api/admin/logs", requireAdmin, (req, res) => {
@@ -650,56 +1613,20 @@ app.post("/api/tts", async (req, res) => {
   try {
     const { text, model, voice, speed, expressionPrompt, britishAccentBoost } = req.body || {};
 
-    if (!openai) {
-      return res.status(400).json({ error: "OPENAI_API_KEY is not configured." });
-    }
+    const { audioBuffer, mimeType } = await synthesizeOpenAI({
+      openai,
+      text,
+      model,
+      voice,
+      speed,
+      expressionPrompt,
+      britishAccentBoost,
+      defaultModel: OPENAI_TTS_DEFAULT_MODEL,
+      defaultVoice: OPENAI_TTS_DEFAULT_VOICE,
+      britishInstructions: OPENAI_TTS_BRITISH_BASE_INSTRUCTIONS,
+    });
 
-    if (typeof text !== "string" || text.trim().length === 0) {
-      return res.status(400).json({ error: "text must be a non-empty string" });
-    }
-
-    const inputText = text.trim().slice(0, 4096);
-    const selectedModel = typeof model === "string" && model.length > 0 ? model : OPENAI_TTS_DEFAULT_MODEL;
-    const selectedVoice = typeof voice === "string" && voice.length > 0 ? voice : OPENAI_TTS_DEFAULT_VOICE;
-    const parsedSpeed = Number.isFinite(Number(speed)) ? Number(speed) : 1;
-    const clampedSpeed = Math.max(0.25, Math.min(4, parsedSpeed));
-    const stylePrompt = typeof expressionPrompt === "string" ? expressionPrompt.trim() : "";
-    const accentBoostEnabled = britishAccentBoost !== false;
-
-    let ttsModel = selectedModel;
-    if (accentBoostEnabled && !ttsModel.startsWith("gpt-4o-mini-tts")) {
-      ttsModel = OPENAI_TTS_DEFAULT_MODEL;
-    }
-
-    const ttsRequest = {
-      model: ttsModel,
-      voice: selectedVoice,
-      input: inputText,
-      response_format: "mp3",
-      speed: clampedSpeed,
-    };
-
-    if (ttsModel.startsWith("gpt-4o-mini-tts")) {
-      const instructionParts = [];
-      if (accentBoostEnabled) {
-        instructionParts.push(OPENAI_TTS_BRITISH_BASE_INSTRUCTIONS);
-      } else {
-        instructionParts.push(
-          "Speak as Captain John Godfrey, an English Victorian mariner in late 1876. Use a formal register, measured delivery, and restrained emotional undertone."
-        );
-      }
-
-      if (stylePrompt.length > 0) {
-        instructionParts.push(`Expression guidance: ${stylePrompt}`);
-      }
-
-      ttsRequest.instructions = instructionParts.join("\n\n");
-    }
-
-    const audioResponse = await openai.audio.speech.create(ttsRequest);
-    const audioBuffer = Buffer.from(await audioResponse.arrayBuffer());
-
-    res.setHeader("Content-Type", "audio/mpeg");
+    res.setHeader("Content-Type", mimeType);
     res.setHeader("Cache-Control", "no-store");
     return res.send(audioBuffer);
   } catch (error) {
@@ -711,6 +1638,531 @@ app.post("/api/tts", async (req, res) => {
     return res.status(500).json({
       error: "OpenAI speech generation failed.",
       details: error?.message || "Unknown error",
+    });
+  }
+});
+
+app.get("/api/admin/elevenlabs-settings", requireAdmin, (req, res) => {
+  return res.json({
+    ...elevenLabsSettings,
+    apiKey: elevenLabsSettings.apiKey ? "********" : "",
+    hasApiKey: Boolean(elevenLabsSettings.apiKey),
+  });
+});
+
+app.post("/api/admin/elevenlabs-settings", requireAdmin, (req, res) => {
+  const incoming = req.body || {};
+  const nextSettings = sanitizeElevenLabsSettings({
+    ...elevenLabsSettings,
+    ...incoming,
+  });
+
+  if (incoming.apiKeyMasked === true && (!incoming.apiKey || String(incoming.apiKey).trim().length === 0)) {
+    nextSettings.apiKey = elevenLabsSettings.apiKey;
+  }
+
+  elevenLabsSettings = nextSettings;
+  try {
+    saveElevenLabsSettings(nextSettings);
+    return res.json({
+      ...nextSettings,
+      apiKey: nextSettings.apiKey ? "********" : "",
+      hasApiKey: Boolean(nextSettings.apiKey),
+    });
+  } catch (error) {
+    console.error("Failed to save elevenlabs-config.json:", error);
+    return res.status(500).json({ error: "ElevenLabs settings changed in memory but could not be saved to disk." });
+  }
+});
+
+app.get("/api/admin/performance-cues-selftest", requireAdmin, (req, res) => {
+  const samplePerformanceText = ADMIN_PERFORMANCE_CUE_SELFTEST_TEXT;
+  const performanceEvents = parsePerformanceEvents(samplePerformanceText);
+  const strippedForTts = stripPerformanceCues(samplePerformanceText);
+  return res.json({
+    ok: true,
+    samplePerformanceText,
+    performanceEvents,
+    strippedForTts,
+    strippedHasNoCueMarkers: !/\[|\]|\*/.test(strippedForTts),
+    parsedEventSummary: performanceEvents.map((e) => `${e.type}:${e.value}`).join(", "),
+    checks: {
+      hasThinkingPerformer: performanceEvents.some((e) => e.type === "performer" && e.value === "thinking"),
+      hasSeriousPerformer: performanceEvents.some((e) => e.type === "performer" && e.value === "serious"),
+      hasShortPause: performanceEvents.some((e) => e.type === "pause" && e.value === "short"),
+      hasGazeDown: performanceEvents.some((e) => e.type === "gaze" && e.value === "down"),
+      hasLeanForward: performanceEvents.some((e) => e.type === "posture" && e.value === "lean_forward"),
+      spokenLinePreserved: /We hold to our course/.test(strippedForTts),
+    },
+  });
+});
+
+app.post("/api/tts/elevenlabs", async (req, res) => {
+  try {
+    const performanceText = typeof req.body?.text === "string" ? req.body.text : "";
+    const spokenForEl = stripPerformanceCues(performanceText);
+    if (!spokenForEl) {
+      return res.status(400).json({
+        error: "No speakable text after removing performance cues (or input was empty).",
+      });
+    }
+    console.log("PERFORMANCE_TEXT_FOR_UNREAL", performanceText.trim());
+    console.log("SPOKEN_TEXT_FOR_ELEVENLABS", spokenForEl);
+    console.log("PERFORMANCE_EVENTS_PARSED", JSON.stringify(parsePerformanceEvents(performanceText.trim())));
+
+    const rawOverrideSettings = req.body?.settings || {};
+    const overrideSettings = sanitizeElevenLabsSettings({
+      ...elevenLabsSettings,
+      ...rawOverrideSettings,
+    });
+
+    // Preserve saved API key when frontend sends blank or masked placeholder.
+    const incomingApiKey = typeof rawOverrideSettings.apiKey === "string" ? rawOverrideSettings.apiKey.trim() : "";
+    if ((!incomingApiKey || incomingApiKey === "********") && elevenLabsSettings.apiKey) {
+      overrideSettings.apiKey = elevenLabsSettings.apiKey;
+    }
+
+    const { audioBuffer, mimeType } = await synthesizeElevenLabs({
+      text: spokenForEl.slice(0, 4096),
+      settings: overrideSettings,
+    });
+    const suggestedDownloadFilename = `godfrey-response-${compactPerthFilenameStamp()}.mp3`;
+
+    return res.json({
+      responseText: performanceText.trim(),
+      speechProvider: "elevenlabs",
+      mimeType,
+      suggestedDownloadFilename,
+      audioBase64: audioBuffer.toString("base64"),
+      metadata: {
+        modelId: overrideSettings.modelId,
+        voiceId: overrideSettings.voiceId,
+        stability: overrideSettings.stability,
+        similarityBoost: overrideSettings.similarityBoost,
+        speakerBoost: Boolean(overrideSettings.speakerBoost),
+      },
+    });
+  } catch (error) {
+    console.error("ElevenLabs TTS error:", error);
+    const status = Number.isFinite(Number(error?.statusCode)) ? Number(error.statusCode) : 500;
+    const normalizedStatus = status >= 400 && status < 600 ? status : 500;
+    return res.status(normalizedStatus).json({
+      error: "ElevenLabs speech generation failed.",
+      details: error?.providerDetails || error?.message || "Unknown error",
+      statusCode: normalizedStatus,
+      speechProvider: "elevenlabs",
+    });
+  }
+});
+
+app.post("/api/godfrey/speak/stream-pcm", async (req, res) => {
+  const t0 = process.hrtime.bigint();
+  const msSinceStart = () => Number(process.hrtime.bigint() - t0) / 1e6;
+  const logTiming = (phase, extra = {}) => {
+    console.log("stream-pcm timing", {
+      phase,
+      msSinceRequestReceived: Math.round(msSinceStart() * 1000) / 1000,
+      isoTime: new Date().toISOString(),
+      ...extra,
+    });
+  };
+
+  let headersFlushed = false;
+  let sampleRate;
+  let numChannels;
+  const pcmBytesCounter = { n: 0 };
+
+  logTiming("request_received");
+
+  try {
+    const ttsOnly = req.body?.ttsOnly === true || req.body?.ttsOnly === "true";
+    const ttsRequestId =
+      typeof req.body?.requestId === "string" && req.body.requestId.trim() ? req.body.requestId.trim() : "";
+    const sampleRateRaw = req.body?.sampleRate;
+    const numChannelsRaw = req.body?.numChannels;
+    const includeDocuments = req.body?.includeDocuments === true;
+    let streamMaxWords = responseSettings.maxWords;
+    if (req.body?.maxWords !== undefined && req.body?.maxWords !== null && String(req.body.maxWords).trim() !== "") {
+      streamMaxWords = sanitizeResponseSettings({ maxWords: Number(req.body.maxWords) }).maxWords;
+    } else if (
+      process.env.GODFREY_STREAM_PCM_MAX_WORDS !== undefined &&
+      String(process.env.GODFREY_STREAM_PCM_MAX_WORDS).trim() !== ""
+    ) {
+      streamMaxWords = sanitizeResponseSettings({ maxWords: Number(process.env.GODFREY_STREAM_PCM_MAX_WORDS) }).maxWords;
+    }
+    const logSessionId =
+      typeof req.body?.logSessionId === "string" && req.body.logSessionId.trim()
+        ? req.body.logSessionId.trim()
+        : typeof req.body?.sessionId === "string" && req.body.sessionId.trim()
+          ? req.body.sessionId.trim()
+          : null;
+
+    try {
+      sampleRate = parseAndValidatePcmSampleRate(sampleRateRaw);
+      numChannels = parseAndValidateNumChannels(numChannelsRaw);
+    } catch (validationError) {
+      return res.status(400).json({
+        success: false,
+        error: validationError?.message || "Invalid audio parameters.",
+      });
+    }
+
+    let promptText = "";
+    let assistantReply = "";
+    let adminTestBypassAudio = false;
+
+    if (ttsOnly) {
+      if (!ttsRequestId) {
+        return res.status(400).json({
+          success: false,
+          error: "ttsOnly requires requestId (same value returned by POST /api/chat when outputTarget was unreal).",
+        });
+      }
+      const queued = consumeExhibitionUnrealTtsQueue(ttsRequestId);
+      if (!queued) {
+        return res.status(409).json({
+          success: false,
+          error:
+            "No matching queued assistant reply for this requestId. Send a browser /api/chat with outputTarget=unreal first, or the queue expired.",
+        });
+      }
+      assistantReply = String(queued.performanceText || "").trim();
+      adminTestBypassAudio = queued.adminTestBypass === true;
+      if (!assistantReply) {
+        return res.status(400).json({ success: false, error: "Queued assistant text was empty." });
+      }
+      logTiming("validated_tts_only", {
+        sampleRate,
+        numChannels,
+        requestId: ttsRequestId,
+        assistantChars: assistantReply.length,
+        adminTestBypassAudio,
+      });
+      console.log("POST /api/godfrey/speak/stream-pcm ttsOnly (browser-queued assistant)", {
+        requestId: ttsRequestId,
+        length: assistantReply.length,
+        preview: assistantReply.slice(0, 240),
+        adminTestBypassAudio,
+      });
+    } else {
+      promptText =
+        (typeof req.body?.promptText === "string" && req.body.promptText.trim()) ||
+        (typeof req.body?.PromptText === "string" && req.body.PromptText.trim()) ||
+        (typeof req.body?.text === "string" && req.body.text.trim()) ||
+        "";
+
+      if (!promptText) {
+        return res.status(400).json({
+          success: false,
+          error: "Missing user message: send promptText, PromptText, or text (Unreal prompt).",
+        });
+      }
+
+      logTiming("validated", { sampleRate, numChannels, promptLength: promptText.length });
+
+      console.log("POST /api/godfrey/speak/stream-pcm incoming prompt", {
+        length: promptText.length,
+        preview: promptText.slice(0, 240),
+      });
+    }
+
+    res.status(200);
+    res.setHeader("Content-Type", `audio/L16;rate=${sampleRate};channels=${numChannels}`);
+    res.setHeader("Cache-Control", "no-store, no-transform, must-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.setHeader("X-Audio-Format", "pcm_s16le");
+    res.setHeader("X-Audio-Endian", "little");
+    res.setHeader("X-Audio-Sample-Rate", String(sampleRate));
+    res.setHeader("X-Audio-Channels", String(numChannels));
+
+    if (res.socket && typeof res.socket.setNoDelay === "function") {
+      res.socket.setNoDelay(true);
+    }
+
+    if (typeof res.flushHeaders === "function") {
+      res.flushHeaders();
+    }
+    headersFlushed = true;
+    logTiming("headers_flushed", {
+      includeDocuments,
+      streamMaxWords,
+      ttsOnly,
+      leadSilenceMsDefault: "set GODFREY_STREAM_PCM_LEAD_SILENCE_MS=0 to omit leading silence",
+    });
+
+    const leadMs = parseStreamPcmLeadSilenceMs();
+    if (leadMs > 0) {
+      const frameBytesLead = pcmS16leAlignedFrameBytes(sampleRate, numChannels);
+      const rawBytes = Math.floor((sampleRate * numChannels * 2 * leadMs) / 1000);
+      let bytesTotal = Math.floor(rawBytes / frameBytesLead) * frameBytesLead;
+      if (bytesTotal === 0) {
+        bytesTotal = frameBytesLead;
+      }
+      const writeStep = Math.max(frameBytesLead, Math.floor(STREAM_PCM_MAX_WRITE_BYTES / frameBytesLead) * frameBytesLead);
+      const silence = Buffer.alloc(bytesTotal, 0);
+      for (let offset = 0; offset < silence.length; offset += writeStep) {
+        const end = Math.min(offset + writeStep, silence.length);
+        const sub = silence.subarray(offset, end);
+        pcmBytesCounter.n += sub.length;
+        if (!res.write(sub)) {
+          // eslint-disable-next-line no-await-in-loop
+          await new Promise((resolve) => res.once("drain", resolve));
+        }
+      }
+      logTiming("lead_silence_written", { leadMs, bytes: bytesTotal, frameBytes: frameBytesLead });
+    }
+
+    if (!ttsOnly) {
+      logTiming("llm_started", { includeDocuments, maxWords: streamMaxWords });
+      const chatPayload = await askGodfreyViaExistingPipeline({
+        messages: [{ role: "user", content: promptText }],
+        includeDocuments,
+        logSessionId,
+        maxWords: streamMaxWords,
+      });
+      assistantReply = typeof chatPayload?.response === "string" ? chatPayload.response.trim() : "";
+      adminTestBypassAudio = chatPayload?.adminTestBypass === true;
+      if (!assistantReply) {
+        throw new Error("Godfrey Brain returned an empty assistant reply.");
+      }
+      logTiming("llm_done", { assistantChars: assistantReply.length, adminTestBypassAudio });
+
+      console.log("POST /api/godfrey/speak/stream-pcm generated assistant reply", {
+        length: assistantReply.length,
+        preview: assistantReply.slice(0, 240),
+      });
+    } else {
+      logTiming("llm_skipped_tts_only", { requestId: ttsRequestId });
+    }
+
+    console.log("POST /api/godfrey/speak/stream-pcm performance text (cues preserved; ElevenLabs uses stripped spoken text)", {
+      length: assistantReply.length,
+      preview: assistantReply.slice(0, 240),
+    });
+
+    logTiming("tts_started", { adminTestBypassAudio });
+    if (adminTestBypassAudio) {
+      const mp3Path = await ensureAdminBypassSampleAudio();
+      await streamMp3FileAsPcmToRes(res, {
+        mp3Path,
+        sampleRate,
+        numChannels,
+        timing: { log: logTiming },
+        pcmBytesCounter,
+      });
+    } else {
+      await streamElevenLabsPcmToRes(res, {
+        text: assistantReply,
+        settings: elevenLabsSettings,
+        sampleRate,
+        numChannels,
+        timing: { log: logTiming },
+        pcmBytesCounter,
+      });
+    }
+  } catch (error) {
+    console.error("POST /api/godfrey/speak/stream-pcm error", {
+      error: error?.message || String(error),
+      headersFlushed,
+      pcmBytesOut: pcmBytesCounter.n,
+      sampleRate: sampleRate ?? null,
+      numChannels: numChannels ?? null,
+    });
+    if (headersFlushed) {
+      if (!res.writableEnded) {
+        try {
+          if (
+            pcmBytesCounter.n === 0 &&
+            typeof sampleRate === "number" &&
+            typeof numChannels === "number" &&
+            numChannels === 1
+          ) {
+            const padMs = 100;
+            const frameBytesPad = pcmS16leAlignedFrameBytes(sampleRate, numChannels);
+            const rawPad = Math.min(96000, Math.floor((sampleRate * numChannels * 2 * padMs) / 1000));
+            const padBytes = Math.floor(rawPad / frameBytesPad) * frameBytesPad;
+            if (padBytes > 0) {
+              res.write(Buffer.alloc(padBytes, 0));
+              pcmBytesCounter.n += padBytes;
+              logTiming("error_pad_silence_written", { padBytes, padMs, frameBytes: frameBytesPad });
+            }
+          }
+          res.end();
+        } catch {
+          /* response may already be closing */
+        }
+      }
+      return;
+    }
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "Failed to stream PCM audio.",
+      });
+    }
+    if (!res.writableEnded) {
+      res.end();
+    }
+  }
+});
+
+app.post("/api/unreal/ask", express.raw({ type: ["audio/*", "application/octet-stream"], limit: "15mb" }), async (req, res) => {
+  let responseText = "";
+  let sessionId = null;
+  try {
+    const isRawAudio = Buffer.isBuffer(req.body);
+    const incoming = isRawAudio ? {} : req.body || {};
+    sessionId = typeof incoming.sessionId === "string" ? incoming.sessionId : null;
+    const includeDocuments = incoming.includeDocuments !== false;
+    let questionText = typeof incoming.question === "string" ? incoming.question.trim() : "";
+    let uploadedAudioBuffer = null;
+
+    if (!questionText && isRawAudio) {
+      uploadedAudioBuffer = req.body;
+    } else if (!questionText && typeof incoming.audioBase64 === "string" && incoming.audioBase64.trim().length > 0) {
+      uploadedAudioBuffer = Buffer.from(incoming.audioBase64, "base64");
+    }
+
+    if (!questionText && uploadedAudioBuffer) {
+      questionText = await transcribeAudioWithOpenAI({
+        audioBuffer: uploadedAudioBuffer,
+        mimeType: incoming.audioMimeType || req.get("content-type") || "audio/webm",
+      });
+    }
+
+    if (!questionText) {
+      return res.status(400).json({
+        success: false,
+        error: "Provide either question text, raw audio body (Content-Type: audio/*), or audioBase64 in JSON.",
+      });
+    }
+
+    const chatPayload = await askGodfreyViaExistingPipeline({
+      messages: [{ role: "user", content: questionText }],
+      includeDocuments,
+      logSessionId: sessionId,
+    });
+    responseText = typeof chatPayload.response === "string" ? chatPayload.response.trim() : "";
+    sessionId = chatPayload.logSessionId || sessionId;
+    const useAdminBypassAudio = chatPayload.adminTestBypass === true;
+
+    if (useAdminBypassAudio) {
+      await ensureAdminBypassSampleAudio();
+      responseText = ADMIN_BYPASS_DISPLAY_TEXT;
+    }
+
+    const spokenForEl = useAdminBypassAudio
+      ? ADMIN_BYPASS_SAMPLE_SPOKEN_TEXT
+      : stripPerformanceCues(responseText);
+    if (!spokenForEl) {
+      return res.status(400).json({
+        success: false,
+        error: "Assistant reply contained only performance cues; nothing left for speech synthesis.",
+      });
+    }
+    console.log("PERFORMANCE_TEXT_FOR_UNREAL", responseText);
+    console.log("SPOKEN_TEXT_FOR_ELEVENLABS", spokenForEl);
+    console.log("PERFORMANCE_EVENTS_PARSED", JSON.stringify(parsePerformanceEvents(responseText)));
+
+    let mp3Path;
+    let mp3SizeBytes;
+    if (useAdminBypassAudio) {
+      mp3Path = ADMIN_BYPASS_SAMPLE_MP3_PATH;
+      mp3SizeBytes = fs.statSync(mp3Path).size;
+    } else {
+      const mp3Result = await synthesizeElevenLabs({
+        text: spokenForEl.slice(0, 4096),
+        settings: elevenLabsSettings,
+        outputFormat: "mp3_44100_128",
+        accept: "audio/mpeg",
+      });
+      const generatedMp3Filename = buildGeneratedAudioFilename("mp3");
+      mp3Path = path.join(GENERATED_AUDIO_DIR, generatedMp3Filename);
+      fs.writeFileSync(mp3Path, mp3Result.audioBuffer);
+      mp3SizeBytes = fs.statSync(mp3Path).size;
+    }
+
+    const mp3Filename = path.basename(mp3Path);
+    const wavFilename = mp3Filename.replace(/\.mp3$/i, ".wav");
+    const wavPath = path.join(path.dirname(mp3Path), wavFilename);
+    let wavSizeBytes = 0;
+    let mp3DurationSeconds = null;
+    let wavDurationSeconds = null;
+
+    try {
+      await convertMp3ToPcmWav({ mp3Path, wavPath });
+      wavSizeBytes = fs.statSync(wavPath).size;
+      [mp3DurationSeconds, wavDurationSeconds] = await Promise.all([
+        getMediaDurationSeconds(mp3Path),
+        getMediaDurationSeconds(wavPath),
+      ]);
+
+      const durationDelta = Math.abs(mp3DurationSeconds - wavDurationSeconds);
+      if (durationDelta > 0.25) {
+        throw new Error(
+          `WAV duration mismatch: mp3=${mp3DurationSeconds.toFixed(3)}s wav=${wavDurationSeconds.toFixed(3)}s delta=${durationDelta.toFixed(3)}s`
+        );
+      }
+    } catch (wavError) {
+      console.error("WAV conversion failed for Unreal endpoint.", {
+        error: wavError?.message || String(wavError),
+        ffmpegStderr: wavError?.stderr || null,
+      });
+      if (fs.existsSync(wavPath)) {
+        try {
+          fs.unlinkSync(wavPath);
+        } catch (unlinkError) {
+          console.error("Failed to remove invalid WAV file:", unlinkError);
+        }
+      }
+      throw wavError;
+    }
+
+    console.log("Unreal audio generation stats:", {
+      mp3Path,
+      wavPath,
+      mp3SizeBytes,
+      wavSizeBytes,
+      mp3DurationSeconds,
+      wavDurationSeconds,
+    });
+
+    const audioPathname = mp3Path.startsWith(GENERATED_AUDIO_DIR)
+      ? `/audio/generated/${mp3Filename}`
+      : `/audio/${mp3Filename}`;
+    const wavPathname = wavPath.startsWith(GENERATED_AUDIO_DIR)
+      ? `/audio/generated/${wavFilename}`
+      : `/audio/${wavFilename}`;
+    const suggestedFilename = useAdminBypassAudio
+      ? "godfrey-admin-bypass-sample.mp3"
+      : `godfrey-response-${compactPerthFilenameStamp()}.mp3`;
+
+    return res.json({
+      success: true,
+      sessionId: sessionId || null,
+      text: responseText,
+      speechProvider: "elevenlabs",
+      audioUrl: createAbsoluteUrl(req, audioPathname),
+      wavUrl: createAbsoluteUrl(req, wavPathname),
+      mimeType: "audio/mpeg",
+      durationSeconds: Number(wavDurationSeconds.toFixed(3)),
+      suggestedFilename,
+      emotion: null,
+      intensity: null,
+      gesture: null,
+    });
+  } catch (error) {
+    console.error("Unreal ask endpoint error:", error);
+    return res.status(500).json({
+      success: false,
+      sessionId: sessionId || null,
+      text: responseText || null,
+      speechProvider: "elevenlabs",
+      error: error?.message || "Unreal ask request failed.",
+      emotion: null,
+      intensity: null,
+      gesture: null,
     });
   }
 });
@@ -839,6 +2291,12 @@ app.post("/api/chat", async (req, res) => {
     console.log("godfrey-voice-trace", { phase: "chat_received", requestId: voiceRequestId });
   }
   const selectedProvider = currentProvider;
+  const rawBodyMaxWords = req.body?.maxWords;
+  const maxWordsPerReply =
+    rawBodyMaxWords !== undefined && rawBodyMaxWords !== null && String(rawBodyMaxWords).trim() !== ""
+      ? sanitizeResponseSettings({ maxWords: Number(rawBodyMaxWords) }).maxWords
+      : responseSettings.maxWords;
+  const maxTokensForReply = estimateTokenBudgetFromWordLimit(maxWordsPerReply);
 
   try {
     const { messages, includeDocuments, logSessionId: incomingLogId } = req.body;
@@ -862,6 +2320,10 @@ app.post("/api/chat", async (req, res) => {
       }))
       .slice(-MAX_HISTORY_MESSAGES);
 
+    if (await respondWithAdminBypassIfEnabled(req, res, sanitizedMessages, incomingLogId)) {
+      return;
+    }
+
     if (selectedProvider === "openai") {
       if (!openai) {
         return res.status(400).json({ error: "OPENAI_API_KEY is not configured." });
@@ -874,7 +2336,7 @@ app.post("/api/chat", async (req, res) => {
 
       const requestParams = {
         model: OPENAI_MODEL,
-        max_output_tokens: MAX_RESPONSE_TOKENS,
+        max_output_tokens: maxTokensForReply,
         instructions: `${currentSystemPrompt}\n\n${SOURCE_PRIORITY_ADDENDUM}\n\n${OPENAI_STYLE_ADDENDUM}`,
         temperature: 1,
         input: inputMessages,
@@ -894,15 +2356,25 @@ app.post("/api/chat", async (req, res) => {
         typeof openaiResponse.output_text === "string" && openaiResponse.output_text.trim().length > 0
           ? openaiResponse.output_text.trim()
           : "*He pauses, unwilling to offer a reply.*";
+      if (parseOutputTargetFromBody(req.body) === "unreal") {
+        console.log("CHAT_RESPONSE_TEXT_RAW", responseText);
+      }
+      const limitedOpenAi = limitResponseToWordCount(responseText, maxWordsPerReply);
 
       const isTruncated = openaiResponse.status === "incomplete";
       let activeLogFile = null;
       try {
-        activeLogFile = writeChatExchangeLog(req, sanitizedMessages, incomingLogId, responseText);
+        activeLogFile = writeChatExchangeLog(req, sanitizedMessages, incomingLogId, limitedOpenAi.text);
       } catch (logErr) {
         console.error("Session log write failed:", logErr);
       }
-      return res.json({ response: responseText, truncated: isTruncated, logSessionId: activeLogFile });
+      return res.json(
+        enrichChatResponseForExhibition(req, {
+          response: limitedOpenAi.text,
+          truncated: isTruncated || limitedOpenAi.wasLimited,
+          logSessionId: activeLogFile,
+        })
+      );
     }
 
     if (!anthropic) {
@@ -938,7 +2410,7 @@ app.post("/api/chat", async (req, res) => {
 
     const requestParams = {
       model: "claude-sonnet-4-6",
-      max_tokens: MAX_RESPONSE_TOKENS,
+      max_tokens: maxTokensForReply,
       betas: ["files-api-2025-04-14", "pdfs-2024-09-25"],
       system: `${currentSystemPrompt}\n\n${SOURCE_PRIORITY_ADDENDUM}`,
       messages: requestMessages,
@@ -972,15 +2444,25 @@ app.post("/api/chat", async (req, res) => {
       .map((block) => block.text)
       .join("\n")
       .trim();
+    if (parseOutputTargetFromBody(req.body) === "unreal") {
+      console.log("CHAT_RESPONSE_TEXT_RAW", responseText);
+    }
+    const limitedClaude = limitResponseToWordCount(responseText, maxWordsPerReply);
 
     const isTruncated = claudeResponse.stop_reason === "max_tokens";
     let activeLogFile = null;
     try {
-      activeLogFile = writeChatExchangeLog(req, sanitizedMessages, incomingLogId, responseText);
+      activeLogFile = writeChatExchangeLog(req, sanitizedMessages, incomingLogId, limitedClaude.text);
     } catch (logErr) {
       console.error("Session log write failed:", logErr);
     }
-    return res.json({ response: responseText, truncated: isTruncated, logSessionId: activeLogFile });
+    return res.json(
+      enrichChatResponseForExhibition(req, {
+        response: limitedClaude.text,
+        truncated: isTruncated || limitedClaude.wasLimited,
+        logSessionId: activeLogFile,
+      })
+    );
   } catch (error) {
     if (isOpenAIConnectionError(error)) {
       return res.status(503).json({

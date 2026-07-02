@@ -1,0 +1,14 @@
+---
+description: (Rolled back) Exhibition TTS sentence segmentation — not active; one queue item per reply.
+alwaysApply: false
+---
+
+# Exhibition TTS segmentation — rolled back
+
+Sentence-level queue segmentation was **removed from the active exhibition path** (June 2026).
+
+**Current behaviour:** one Godfrey reply → **one** exhibition queue item → **one** `requestId` → **one** PCM stream. Performance cues and `performanceEvents` still apply to the full reply.
+
+**Why rolled back:** Unreal was polling the next segment on HTTP stream completion (not playback end), stacking multiple ACE sessions and conflicting with MetaHuman performer state. Re-enable only after UE waits for `OnPlaybackEnded` before the next poll.
+
+**Preserved for reference:** `lib/segment-godfrey-speech.js`, `npm run test-segment-speech` (dev only).

@@ -838,6 +838,24 @@ button:hover {
   font-size: 0.9rem;
 }
 
+.admin-test-bypass-banner {
+  margin: 0 0 0.75rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid #8a6d3b;
+  border-radius: 6px;
+  background: rgba(138, 109, 59, 0.18);
+  color: #f0d9a8;
+  font-size: 0.92rem;
+}
+
+.admin-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.95rem;
+  color: #dce6f5;
+}
+
 @media (max-width: 900px), (hover: none) and (pointer: coarse) {
   .captain-header-subline {
     flex-direction: column;

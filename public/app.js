@@ -57,6 +57,10 @@ const splashSettingsStatus = document.getElementById("splashSettingsStatus");
 const maxReplyWordsInput = document.getElementById("maxReplyWordsInput");
 const saveResponseSettingsAdminButton = document.getElementById("saveResponseSettingsAdminButton");
 const responseSettingsStatus = document.getElementById("responseSettingsStatus");
+const adminTestBypassInput = document.getElementById("adminTestBypassInput");
+const saveAdminTestBypassButton = document.getElementById("saveAdminTestBypassButton");
+const adminTestBypassStatus = document.getElementById("adminTestBypassStatus");
+const adminTestBypassBanner = document.getElementById("adminTestBypassBanner");
 const continueReplyRow = document.getElementById("continueReplyRow");
 const continueReplyButton = document.getElementById("continueReplyButton");
 
@@ -82,6 +86,7 @@ const CHAT_TIMEOUT_MS = 20000;
 const DEFAULT_SPLASH_SETTINGS = { t1Ms: 1000, t2Ms: 1000 };
 let splashSettings = { ...DEFAULT_SPLASH_SETTINGS };
 let responseSettings = { maxWords: 120 };
+let adminTestBypassSettings = { bypassAi: false, sampleAudioReady: false };
 /** Milliseconds of quiet after the Captain's last reply before a single in-character nudge (display only). */
 const IDLE_NUDGE_MS = 120000;
 let idleNudgeTimer = null;
@@ -137,6 +142,28 @@ function newGodfreyVoiceRequestId() {
     return crypto.randomUUID();
   }
   return `voice-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function newGodfreyChatRequestId() {
+  return newGodfreyVoiceRequestId();
+}
+
+/** Exhibition vs local: `localStorage.setItem("godfrey-output-target","browser")` forces browser-only audio. */
+function getGodfreyOutputTarget() {
+  try {
+    const ls = typeof localStorage !== "undefined" ? localStorage.getItem("godfrey-output-target") : null;
+    if (ls === "browser" || ls === "unreal") {
+      return ls;
+    }
+  } catch {
+    /* ignore */
+  }
+  const main = document.querySelector("main.app-shell");
+  const ds = main?.dataset?.godfreyDefaultOutputTarget;
+  if (ds === "browser" || ds === "unreal") {
+    return ds;
+  }
+  return "browser";
 }
 
 function createGodfreyVoiceLatencyTrace(requestId) {
@@ -465,6 +492,10 @@ function runSplashSequence() {
   }, splashSettings.t1Ms);
 }
 
+function isAdminTestBypassActive() {
+  return Boolean(adminTestBypassSettings.bypassAi);
+}
+
 function clearIdleNudgeTimer() {
   if (idleNudgeTimer) {
     clearTimeout(idleNudgeTimer);
@@ -474,6 +505,9 @@ function clearIdleNudgeTimer() {
 
 function scheduleIdleNudge() {
   clearIdleNudgeTimer();
+  if (isAdminTestBypassActive()) {
+    return;
+  }
   const last = conversation[conversation.length - 1];
   if (!last || last.role !== "assistant" || nudgedSinceLastUserTurn) {
     return;
@@ -496,7 +530,7 @@ function scheduleIdleNudge() {
 
 function bumpIdleNudgeAfterUserActivity() {
   clearIdleNudgeTimer();
-  if (nudgedSinceLastUserTurn) {
+  if (isAdminTestBypassActive() || nudgedSinceLastUserTurn) {
     return;
   }
   const last = conversation[conversation.length - 1];
@@ -546,6 +580,45 @@ function setResponseSettingsStatus(message, isError = false) {
   if (!responseSettingsStatus) return;
   responseSettingsStatus.textContent = message;
   responseSettingsStatus.style.color = isError ? "#e3a0a0" : "";
+}
+
+function setAdminTestBypassStatus(message, isError = false) {
+  if (!adminTestBypassStatus) return;
+  adminTestBypassStatus.textContent = message;
+  adminTestBypassStatus.style.color = isError ? "#e3a0a0" : "";
+}
+
+function applyAdminTestBypassToInputs() {
+  if (adminTestBypassInput) {
+    adminTestBypassInput.checked = Boolean(adminTestBypassSettings.bypassAi);
+  }
+  if (isAdminTestBypassActive()) {
+    clearIdleNudgeTimer();
+  }
+  updateAdminTestBypassBanner();
+}
+
+async function loadTestBypassActiveFlag() {
+  try {
+    const response = await fetch("/api/test-bypass-active", fetchOpts);
+    const data = await response.json();
+    if (response.ok) {
+      adminTestBypassSettings.bypassAi = data.bypassAi === true;
+      if (isAdminTestBypassActive()) {
+        clearIdleNudgeTimer();
+      }
+      updateAdminTestBypassBanner();
+    }
+  } catch {
+    /* non-fatal */
+  }
+}
+
+function updateAdminTestBypassBanner() {
+  if (!adminTestBypassBanner) return;
+  const show = isAdmin && Boolean(adminTestBypassSettings.bypassAi);
+  adminTestBypassBanner.classList.toggle("hidden-block", !show);
+  adminTestBypassBanner.classList.toggle("admin-only-hidden", !isAdmin);
 }
 
 function parseMaxReplyWords(value, fallback) {
@@ -633,6 +706,67 @@ async function saveResponseSettings() {
   }
 }
 
+async function loadAdminTestBypassSettings() {
+  if (!isAdmin) return;
+  try {
+    const response = await fetch("/api/admin/test-bypass-settings", fetchOpts);
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Unable to load test bypass settings.");
+    }
+    adminTestBypassSettings = {
+      bypassAi: data.bypassAi === true,
+      sampleAudioReady: data.sampleAudioReady === true,
+      sampleAudioUrl: data.sampleAudioUrl || null,
+    };
+    applyAdminTestBypassToInputs();
+    const sampleNote = adminTestBypassSettings.sampleAudioReady
+      ? "Sample audio saved."
+      : "Sample audio will be generated on first bypass request.";
+    setAdminTestBypassStatus(adminTestBypassSettings.bypassAi ? `Bypass on. ${sampleNote}` : `Bypass off. ${sampleNote}`);
+  } catch (error) {
+    setAdminTestBypassStatus(error.message || "Unable to load test bypass settings.", true);
+  }
+}
+
+async function saveAdminTestBypassSettings() {
+  if (!isAdmin) return;
+  const next = {
+    bypassAi: Boolean(adminTestBypassInput?.checked),
+  };
+  try {
+    const response = await fetch("/api/admin/test-bypass-settings", {
+      ...fetchOpts,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(next),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Unable to save test bypass settings.");
+    }
+    adminTestBypassSettings = {
+      bypassAi: data.bypassAi === true,
+      sampleAudioReady: data.sampleAudioReady === true,
+      sampleAudioUrl: data.sampleAudioUrl || null,
+    };
+    applyAdminTestBypassToInputs();
+    if (adminTestBypassSettings.bypassAi) {
+      setAdminTestBypassStatus(
+        adminTestBypassSettings.sampleAudioReady
+          ? "Test bypass enabled. Using saved sample audio."
+          : "Test bypass enabled. Sample audio generated and saved."
+      );
+    } else {
+      setAdminTestBypassStatus("Test bypass disabled.");
+    }
+  } catch (error) {
+    setAdminTestBypassStatus(error.message || "Failed to save test bypass settings.", true);
+  }
+}
+
 async function saveSplashSettings() {
   if (!isAdmin) return;
   const next = {
@@ -668,6 +802,7 @@ function applyAdminGating() {
   document.querySelectorAll("[data-admin-only]").forEach((el) => {
     el.classList.toggle("admin-only-hidden", !isAdmin);
   });
+  updateAdminTestBypassBanner();
   if (adminLoginBlock) {
     adminLoginBlock.classList.toggle("hidden-block", isAdmin);
   }
@@ -691,6 +826,7 @@ async function checkAdminSession() {
     loadSplashSettings();
     loadElevenLabsSettings();
     loadResponseSettings();
+    loadAdminTestBypassSettings();
   }
 }
 
@@ -721,6 +857,7 @@ async function adminLogin() {
     loadSplashSettings();
     loadElevenLabsSettings();
     loadResponseSettings();
+    loadAdminTestBypassSettings();
   } catch (error) {
     setAdminAuthStatus(error.message || "Sign-in failed.", true);
   }
@@ -1243,6 +1380,23 @@ async function speakWithElevenLabs(text, replyRow, hooks = null) {
   }
 }
 
+async function playAdminBypassSampleAudio(audioUrl, hooks = null) {
+  try {
+    stopSpeechPlayback();
+    setSpeechStatus("Playing admin test sample...");
+    const response = await fetch(audioUrl, fetchOpts);
+    if (!response.ok) {
+      throw new Error("Failed to load admin bypass sample audio.");
+    }
+    const blob = await response.blob();
+    return playFetchedAudioBlob(blob, hooks, "Playing admin test sample...");
+  } catch (error) {
+    console.error(error);
+    setSpeechStatus(error.message || "Admin test sample playback failed.", true);
+    hooks?.voiceTrace?.mark?.("browser_playback_complete");
+  }
+}
+
 async function speakAssistantReply(text, replyRow = null, hooks = null) {
   const markPlaybackDone = () => {
     hooks?.voiceTrace?.mark?.("browser_playback_complete");
@@ -1384,7 +1538,12 @@ async function updateSystemPrompt(mode) {
 }
 
 async function sendMessage(content, options = {}) {
-  const { voiceTrace = null, voiceInteraction = false } = options;
+  const {
+    voiceTrace = null,
+    voiceInteraction = false,
+    requestId: optRequestId = null,
+    outputTargetOverride = null,
+  } = options;
   const userText = String(content ?? "").trim();
   if (!userText) {
     if (voiceInteraction) {
@@ -1425,6 +1584,12 @@ async function sendMessage(content, options = {}) {
   const shouldIncludeDocuments = includeDocumentsNextTurn;
   includeDocumentsNextTurn = false;
 
+  const outputTarget = outputTargetOverride ?? getGodfreyOutputTarget();
+  let routingRequestId = typeof optRequestId === "string" && optRequestId.trim() ? optRequestId.trim() : null;
+  if (outputTarget === "unreal" && !routingRequestId) {
+    routingRequestId = voiceTrace?.requestId || newGodfreyChatRequestId();
+  }
+
   try {
     if (voiceTrace) {
       setGodfreyVoiceUiState(GODFREY_VOICE_UI.WAITING_LLM);
@@ -1446,6 +1611,9 @@ async function sendMessage(content, options = {}) {
         messages: conversation,
         includeDocuments: shouldIncludeDocuments,
         logSessionId,
+        outputTarget,
+        voiceInteraction,
+        requestId: routingRequestId,
       }),
       signal: controller.signal,
     });
@@ -1479,6 +1647,11 @@ async function sendMessage(content, options = {}) {
     if (typeof data.logSessionId === "string" && data.logSessionId) {
       logSessionId = data.logSessionId;
     }
+    if (data.adminTestBypass === true) {
+      adminTestBypassSettings.bypassAi = true;
+      clearIdleNudgeTimer();
+      updateAdminTestBypassBanner();
+    }
 
     if (voiceTrace) {
       setGodfreyVoiceUiState(GODFREY_VOICE_UI.WAITING_TTS);
@@ -1489,7 +1662,29 @@ async function sendMessage(content, options = {}) {
           onAudioStart: () => setGodfreyVoiceUiState(GODFREY_VOICE_UI.PLAYING),
         }
       : null;
-    await speakAssistantReply(captainReply, latestAssistantRow, playbackHooks);
+    if (data.adminTestBypass && data.adminBypassAudioUrl) {
+      if (data.outputTarget === "unreal") {
+        voiceTrace?.mark?.("browser_playback_complete");
+        if (data.unrealTts?.queued) {
+          console.log("godfrey-unreal: admin test bypass queued for Unreal stream-pcm", {
+            requestId: data.requestId,
+            statusUrl: data.unrealTts?.statusUrl,
+          });
+        }
+      } else {
+        await playAdminBypassSampleAudio(data.adminBypassAudioUrl, playbackHooks);
+      }
+    } else if (data.outputTarget === "unreal") {
+      voiceTrace?.mark?.("browser_playback_complete");
+      if (data.unrealTts?.queued) {
+        console.log("godfrey-unreal: assistant reply queued for Unreal stream-pcm", {
+          requestId: data.requestId,
+          statusUrl: data.unrealTts?.statusUrl,
+        });
+      }
+    } else {
+      await speakAssistantReply(captainReply, latestAssistantRow, playbackHooks);
+    }
     if (voiceTrace) {
       logGodfreyVoiceLatency(voiceTrace);
     }
@@ -1651,13 +1846,17 @@ if (continueReplyButton) {
 /** Sends a finalized voice transcript through the same /api/chat path as typed input. */
 async function submitGodfreyVoiceTurn(text) {
   const trimmed = String(text || "").trim();
-  if (!trimmed || godfreyPptSubmitInFlight || isSending) {
+  if (!trimmed || godfreyPttSubmitInFlight || isSending) {
     return;
   }
-  godfreyPptSubmitInFlight = true;
+  godfreyPttSubmitInFlight = true;
   godfreyPttButton?.classList.add("is-processing");
   godfreyPttButton?.classList.remove("is-listening");
-  await sendMessage(trimmed, { voiceTrace: godfreyVoiceTrace, voiceInteraction: true });
+  await sendMessage(trimmed, {
+    voiceTrace: godfreyVoiceTrace,
+    voiceInteraction: true,
+    requestId: godfreyVoiceTrace?.requestId || null,
+  });
 }
 
 /**
@@ -1685,12 +1884,12 @@ function onGodfreyPttClick() {
   if (!godfreyPttButton || godfreyPttButton.disabled) {
     return;
   }
-  if (isSending || godfreyPptSubmitInFlight) {
+  if (isSending || godfreyPttSubmitInFlight) {
     return;
   }
 
   if (godfreyPttListening) {
-    godfreyPptUserAborted = true;
+    godfreyPttUserAborted = true;
     stopGodfreySpeechRecognizer();
     return;
   }
@@ -1700,8 +1899,8 @@ function onGodfreyPttClick() {
   godfreyVoiceTrace.mark("mic_start");
   renderGodfreyVoiceDebugPanel();
 
-  godfreyPptUserAborted = false;
-  godfreyPptReceivedFinalThisStart = false;
+  godfreyPttUserAborted = false;
+  godfreyPttReceivedFinalThisStart = false;
   godfreyNoSpeechRetryCount = 0;
   godfreyLastInterimText = "";
 
@@ -1751,7 +1950,7 @@ function onGodfreyPttClick() {
     if (!finalTrim) {
       return;
     }
-    if (godfreyPptSubmitInFlight || isSending) {
+    if (godfreyPttSubmitInFlight || isSending) {
       return;
     }
     const now = Date.now();
@@ -1772,15 +1971,15 @@ function onGodfreyPttClick() {
     setGodfreyVoiceUiState(GODFREY_VOICE_UI.TRANSCRIBING);
     renderGodfreyVoiceDebugPanel();
 
-    godfreyPptReceivedFinalThisStart = true;
+    godfreyPttReceivedFinalThisStart = true;
     void submitGodfreyVoiceTurn(finalTrim);
   };
 
   speechRecognizer.onerror = (event) => {
     const err = event.error || "unknown";
     console.warn("godfrey-voice recognition error", err);
-    if (err === "aborted" && godfreyPptUserAborted) {
-      godfreyPptUserAborted = false;
+    if (err === "aborted" && godfreyPttUserAborted) {
+      godfreyPttUserAborted = false;
       resetGodfreyPttVisualIdle();
       return;
     }
@@ -1808,18 +2007,18 @@ function onGodfreyPttClick() {
   };
 
   speechRecognizer.onend = () => {
-    godfreyPptListening = false;
+    godfreyPttListening = false;
     godfreyPttButton?.classList.remove("is-listening");
     godfreyPttButton?.setAttribute("aria-pressed", "false");
-    if (godfreyPptUserAborted) {
-      godfreyPptUserAborted = false;
+    if (godfreyPttUserAborted) {
+      godfreyPttUserAborted = false;
       resetGodfreyPttVisualIdle();
       return;
     }
-    if (godfreyPptSubmitInFlight || isSending) {
+    if (godfreyPttSubmitInFlight || isSending) {
       return;
     }
-    if (!godfreyPptReceivedFinalThisStart) {
+    if (!godfreyPttReceivedFinalThisStart) {
       setGodfreyVoiceUiState(GODFREY_VOICE_UI.IDLE);
     }
   };
@@ -1912,6 +2111,12 @@ if (saveResponseSettingsAdminButton) {
   });
 }
 
+if (saveAdminTestBypassButton) {
+  saveAdminTestBypassButton.addEventListener("click", () => {
+    saveAdminTestBypassSettings();
+  });
+}
+
 setupGodfreyPushToTalk();
 
 if ("speechSynthesis" in window) {
@@ -1923,6 +2128,7 @@ if ("speechSynthesis" in window) {
 
 (async () => {
   await loadSplashSettings();
+  await loadTestBypassActiveFlag();
   runSplashSequence();
   loadSpeechSettings();
   applySpeechSettingsToInputs();
