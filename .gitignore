@@ -1,5 +1,7 @@
 node_modules/
 .env
+**/__pycache__/
+*.pyc
 # Session chat history (session-*.json). Never commit. On production, prefer GODFREY_LOGS_DIR outside this clone.
 logs/
 
