@@ -17,10 +17,65 @@ ANTHROPIC_API_KEY=your_key_here
 OPENAI_API_KEY=your_openai_key_here
 ELEVENLABS_API_KEY=your_elevenlabs_key_here
 ELEVENLABS_VOICE_ID=your_elevenlabs_voice_id_here
-ELEVENLABS_MODEL_ID=eleven_multilingual_v2
+ELEVENLABS_MODEL_ID=eleven_turbo_v2_5
 ELEVENLABS_STABILITY=0.5
 ELEVENLABS_SIMILARITY_BOOST=0.75
 ELEVENLABS_SPEAKER_BOOST=true
+```
+
+### Reply latency
+
+On the direct (game mic) path the Brain streams the model's reply straight into
+ElevenLabs' WebSocket TTS, so Godfrey begins speaking while he is still composing
+the rest of the answer. Measured against the previous wait-then-speak behaviour
+this cuts about 1.5 seconds off the silence before he starts.
+
+Set `GODFREY_PIPELINE_LLM_TTS=0` to turn it off and restore the old behaviour. A
+single request can also opt out by sending `"pipeline": false` in the body of
+`POST /api/godfrey/speak/stream-pcm`, which is handy for A/B comparisons without
+restarting. If the WebSocket cannot be opened, the Brain falls back to the
+original HTTP path on its own.
+
+See `SPEECH_PIPELINE.md` for the engineering detail behind this path: cue stripping,
+the reply word cap, model choices, and why response caching was rejected.
+
+### Visitor memory within an encounter
+
+The direct exhibition path sends one utterance at a time with no conversation history, so
+`lib/visitor-profile.js` keeps a small in-memory profile per encounter — the visitor's name,
+whether they have been to sea, places they know, and which questions Godfrey has already
+put to them — and renders it into the prompt. This is what lets him remember a name, pitch
+his sea-talk to the person in front of him, and avoid asking the same thing twice.
+
+A small watchlist (`config/notable-visitors.json`) can also recognise a known visitor from
+what they say — not from the webcam. Given name on the list (e.g. Marcia) makes him ask
+for the family name once; a confirmed surname (with speech-to-text aliases) plays the
+authored occasion `occasions/marcia-van-zeller.md` verbatim, once, then remembers them for
+the rest of the encounter. Staff can still queue that occasion from Admin if the mic misses
+the name.
+
+Profiles are memory-only and never written to disk. Session logs in `logs/` are unchanged
+and still record what visitors said verbatim.
+
+### Pronunciation
+
+ElevenLabs reads the spoken line after performance cues are stripped. Bracket notes such as
+`[pronounced VASS]` never reach the voice. To correct a misread name, add a whole-word pair
+in `config/tts-pronunciations.json` (`Vasse` → `Vass`, `Marcia` → `Mar-see-ah`). Logs and
+Unreal still see the original spelling; only the TTS payload is rewritten. Restart the Brain
+after editing that file.
+
+A profile is cleared when the visitor says goodbye, and after an idle gap on the same
+client, so the next person to walk up is a stranger:
+
+```env
+GODFREY_VISITOR_SESSION_IDLE_MS=90000
+```
+
+Check the extraction heuristics after editing them:
+
+```bash
+node scripts/check-visitor-profile.js
 ```
 
 ## 3) Add source documents
@@ -63,6 +118,19 @@ Base URL (local):
 
 `http://localhost:3000`
 
+### Unreal always-on mic (streaming STT)
+
+Additive path for the game microphone. **Does not change** browser Web Speech or `POST /api/chat`.
+
+1. Unreal connects to `ws://localhost:3000/api/unreal/stt`
+2. Streams **PCM16 LE mono @ 24 kHz** as binary WebSocket frames
+3. Brain proxies to OpenAI Realtime transcription (`gpt-4o-mini-transcribe` + `server_vad` by default; `gpt-live-transcribe` uses local VAD because it rejects turn detection)
+4. On `transcript_completed`, Unreal sends the text through the existing `POST /api/godfrey/speak/stream-pcm` text path (same as DirectSpeech)
+
+Control messages (JSON text frames): `{ "type":"control", "action":"pause"|"resume"|"clear" }` — pause while Godfrey is speaking so loudspeakers do not re-trigger STT.
+
+Env knobs: `GODFREY_UNREAL_STT_MODEL`, `GODFREY_UNREAL_STT_SILENCE_MS` (default **1500**), `GODFREY_UNREAL_STT_THRESHOLD` (default **0.50**), `GODFREY_UNREAL_STT_KEYWORDS`. One-word noise hallucinations (`cool`, `hello`) are dropped.
+
 Endpoint:
 
 `POST /api/unreal/ask`
@@ -73,14 +141,26 @@ When the web UI uses `data-godfrey-default-output-target="unreal"` on `<main>` (
 
 **Unreal (Blueprint / `StreamGodfreySpeechToAudio`)** should:
 
-1. Optionally poll `GET http://<host>:<port>/api/exhibition/unreal-tts-status` until `{ "ready": true, "requestId": "..." }`.
+1. Optionally poll `GET http://<host>:<port>/api/exhibition/unreal-tts-status`.
+   - While the LLM is still running after an Unreal-targeted question: `{ "ready": false, "phase": "awaiting_reply", "requestId": "..." }` — UE starts a listening montage (`NotifyReplyIncoming`).
+   - When the reply is queued: `{ "ready": true, "requestId": "...", "performanceEvents": [...] }`.
 2. `POST /api/godfrey/speak/stream-pcm` with JSON body including the same **`requestId`**, plus **`ttsOnly: true`**, **`sampleRate`**, **`numChannels`** (same as your existing stream). The response body is still **raw PCM** (`audio/L16`); ElevenLabs streams the **queued** assistant reply (no second LLM on the server).
 
 `ttsOnly` consumes the queue for that `requestId`. If nothing is queued you get **409** JSON (not PCM).
 
+The `awaiting_reply` phase is set as soon as `POST /api/chat` accepts an Unreal-targeted question (before the LLM finishes) and cleared when TTS is queued, on chat error, on queue consume, or when the TTL expires (`GODFREY_EXHIBITION_UNREAL_TTS_TTL_MS`).
+
 **Browser-only mode:** remove `data-godfrey-default-output-target` from `<main>` or set `localStorage.setItem("godfrey-output-target","browser")` and reload. Optional env: `GODFREY_DEFAULT_OUTPUT_TARGET=browser|unreal` when the client omits `outputTarget`.
 
 Queue TTL: `GODFREY_EXHIBITION_UNREAL_TTS_TTL_MS` (default 180000).
+
+### Occasion scripts (verbatim Unreal speeches)
+
+Authored speeches live in `occasions/*.md` and are queued without the LLM. Unreal plays them through the same exhibition `ttsOnly` path.
+
+- Admin UI: sign in → **Occasion scripts** → select → **Queue for Unreal**
+- CLI: `npm run speak-occasion -- michael-get-well` (Brain must be running; uses `ADMIN_PASSWORD`)
+- Details: [`occasions/README.md`](occasions/README.md)
 
 **Quick test checklist**
 
