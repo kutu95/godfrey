@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "notes": "Watchlist for exhibition recognition. Matching is deterministic (visitor profile), not the LLM. Given name alone is never enough. Webcam presence is occupancy only — identity comes from what they say. Prefer a missed identification over a false one. Godfrey is in early 1877: recognition copy must not mention years, doctorates, or modern book titles.",
+  "visitors": [
+    {
+      "id": "marcia-van-zeller",
+      "displayName": "Marcia van Zeller",
+      "addressAs": "Marcia",
+      "givenNames": ["marcia", "marsha"],
+      "surnames": [
+        "van zeller",
+        "vanzeller",
+        "van-zeller",
+        "van zella",
+        "vanzella",
+        "van seller",
+        "van cellar",
+        "van zelar",
+        "vanzilla",
+        "van zilla",
+        "vanzila",
+        "vanzela",
+        "vansilla",
+        "van silla",
+        "vanzellar",
+        "zeller",
+        "zilla"
+      ],
+      "ttsSpellings": {
+        "Marcia": "Mar-see-ah",
+        "Marsha": "Mar-see-ah"
+      },
+      "occasionId": "marcia-van-zeller",
+      "pendingSurnameNudge": "Their given name is Marcia. This reply: one short acknowledgement, then ask only for the family name. Do not re-introduce yourself. Do not offer 'just Marcia' as an option. Do not explain why you ask.",
+      "recognitionPendingNotes": "This visitor has just been confirmed as Marcia van Zeller. This is the turn to recognise her. Speak a short, private thanks: word has reached you that she has been keeping the record of that night, putting names down so they are not lost. No years, no doctorate, no book titled The Capes. Do not make a scene. Do not explain how you know.",
+      "knownNotes": "This visitor is Marcia van Zeller. You recognised her this encounter and have already spoken your thanks. Do not discover her again, and do not make a scene of her if others are listening. Address her as Marcia, in about one reply in three when the answer has weight. You may speak of her as someone who has been keeping the record of that night — putting names down so they are not lost. You do not know years, doctorates, or a book titled The Capes. Do not explain how you know."
+    }
+  ]
+}

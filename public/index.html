@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Captain John Godfrey Chat</title>
-    <link rel="stylesheet" href="style.css?v=20260511-voice" />
+    <link rel="stylesheet" href="style.css?v=20260802-occasions2" />
     <script
       defer
       data-domain="godfrey.margies.app"
@@ -213,13 +213,19 @@
             <input id="elevenLabsVoiceIdInput" type="text" autocomplete="off" placeholder="Enter ElevenLabs voice ID" />
 
             <label for="elevenLabsModelIdInput">Model ID</label>
-            <input id="elevenLabsModelIdInput" type="text" value="eleven_multilingual_v2" />
+            <input id="elevenLabsModelIdInput" type="text" value="eleven_turbo_v2_5" />
 
             <label for="elevenLabsStabilityInput">Stability (0 - 1)</label>
-            <input id="elevenLabsStabilityInput" type="number" min="0" max="1" step="0.05" value="0.5" />
+            <input id="elevenLabsStabilityInput" type="number" min="0" max="1" step="0.05" value="0.4" />
 
             <label for="elevenLabsSimilarityBoostInput">Similarity boost (0 - 1)</label>
-            <input id="elevenLabsSimilarityBoostInput" type="number" min="0" max="1" step="0.05" value="0.75" />
+            <input id="elevenLabsSimilarityBoostInput" type="number" min="0" max="1" step="0.05" value="0.8" />
+
+            <label for="elevenLabsStyleInput">Style / expression (0 - 1)</label>
+            <input id="elevenLabsStyleInput" type="number" min="0" max="1" step="0.05" value="0.3" />
+
+            <label for="elevenLabsSpeedInput">Speed (0.7 - 1.2 recommended)</label>
+            <input id="elevenLabsSpeedInput" type="number" min="0.25" max="4" step="0.01" value="1.0" />
 
             <label for="elevenLabsSpeakerBoostInput">Speaker boost</label>
             <div class="checkbox-row">
@@ -286,6 +292,66 @@
           </div>
           <div id="adminTestBypassStatus" class="admin-status"></div>
         </div>
+        <details class="admin-splash-settings" id="occasionScriptsPanel">
+          <summary><strong>Occasion scripts</strong> — manage &amp; queue verbatim speeches for Unreal</summary>
+          <p class="admin-auth-help">
+            Authored speeches in <code>occasions/*.md</code> (no LLM rewrite).
+            Create or edit here, then start PIE with the exhibition queue poll and press Queue.
+          </p>
+          <label class="admin-field-label" for="occasionSelect">Occasion</label>
+          <select id="occasionSelect" aria-label="Select occasion script">
+            <option value="">— Select an occasion —</option>
+          </select>
+          <div class="admin-splash-grid occasion-meta-grid">
+            <label for="occasionIdInput">Id</label>
+            <input
+              id="occasionIdInput"
+              type="text"
+              spellcheck="false"
+              autocomplete="off"
+              placeholder="kebab-case-id"
+              disabled
+            />
+            <label for="occasionTitleInput">Title</label>
+            <input id="occasionTitleInput" type="text" placeholder="Display title" disabled />
+            <label for="occasionRecipientInput">Recipient</label>
+            <input id="occasionRecipientInput" type="text" placeholder="Optional" disabled />
+            <label for="occasionNotesInput">Notes</label>
+            <input id="occasionNotesInput" type="text" placeholder="Optional operator notes" disabled />
+          </div>
+          <label class="admin-checkbox-row" for="occasionConversationEndInput">
+            <input id="occasionConversationEndInput" type="checkbox" disabled />
+            Mark conversation end after this speech
+          </label>
+          <label class="admin-field-label" for="occasionGeneratePrompt">Generate with brain</label>
+          <textarea
+            id="occasionGeneratePrompt"
+            rows="5"
+            placeholder="e.g. Create a message from Godfrey asking Open Studios visitors to come and see him so he can explain the true story of the Georgette. Max 120 words; plead with emotion."
+          ></textarea>
+          <div class="admin-splash-grid occasion-meta-grid">
+            <label for="occasionGenerateMaxWords">Max words</label>
+            <input id="occasionGenerateMaxWords" type="number" min="10" max="1000" step="1" value="120" />
+          </div>
+          <div class="admin-actions">
+            <button id="generateOccasionButton" type="button">Generate script</button>
+          </div>
+          <label class="admin-field-label" for="occasionPreview">Script</label>
+          <textarea
+            id="occasionPreview"
+            rows="10"
+            disabled
+            placeholder="Spoken script appears here… Use New or select an occasion to edit."
+          ></textarea>
+          <div class="admin-actions">
+            <button id="newOccasionButton" type="button">New</button>
+            <button id="saveOccasionButton" type="button">Save</button>
+            <button id="deleteOccasionButton" type="button">Delete</button>
+            <button id="refreshOccasionsButton" type="button">Refresh list</button>
+            <button id="queueOccasionButton" type="button">Queue for Unreal</button>
+          </div>
+          <div id="occasionStatus" class="admin-status"></div>
+        </details>
         <textarea
           id="systemPromptInput"
           rows="8"
@@ -319,6 +385,6 @@
     </div>
 
     <script src="analytics.js?v=20260424-1"></script>
-    <script src="app.js?v=20260512-unreal-route"></script>
+    <script src="app.js?v=20260802-occasions"></script>
   </body>
 </html>

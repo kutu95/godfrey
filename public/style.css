@@ -788,6 +788,12 @@ button:hover {
   color: var(--accent);
 }
 
+.admin-splash-settings summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 0.95rem;
+}
+
 .admin-splash-grid {
   display: grid;
   grid-template-columns: 180px 1fr;
@@ -809,8 +815,41 @@ button:hover {
   font-size: 0.92rem;
 }
 
-#systemPromptInput {
+.admin-field-label {
+  display: block;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+#occasionSelect {
   width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--panel-border);
+  border-radius: 7px;
+  background: #0f2133;
+  color: var(--text-main);
+  padding: 0.45rem 0.6rem;
+  font-size: 0.92rem;
+}
+
+.occasion-meta-grid input:disabled,
+#occasionPreview:disabled,
+#occasionConversationEndInput:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+#occasionIdInput:not(:disabled) {
+  font-family: Consolas, "Courier New", monospace;
+}
+
+#occasionGeneratePrompt,
+#occasionPreview,
+#systemPromptInput {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   border: 1px solid var(--panel-border);
   border-radius: 8px;
   background: #0f2133;
@@ -821,7 +860,17 @@ button:hover {
   resize: vertical;
 }
 
-#systemPromptInput:focus {
+#occasionGeneratePrompt {
+  min-height: 6.5rem;
+}
+
+#occasionPreview {
+  min-height: 14rem;
+}
+
+#systemPromptInput:focus,
+#occasionGeneratePrompt:focus,
+#occasionPreview:focus {
   outline: 2px solid #3f5f7a;
   outline-offset: 1px;
 }

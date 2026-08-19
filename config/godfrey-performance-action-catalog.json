@@ -1,0 +1,297 @@
+﻿{
+    "version":  2,
+    "sourceOfTruth":  "D:/UE Projects/MetaHuman_Baseline_UE58_Test/Config/GodfreyPerformanceActionCatalog.json",
+    "syncNote":  "Regenerate from Unreal Config/GodfreyPerformanceActionCatalog.json when AS_* library changes; keep descriptions for the LLM.",
+    "libraryPath":  "/Game/Godfrey/Animation/Animation/Performances",
+    "cueContract":  {
+                        "coarseState":  {
+                                            "marker":  "[thinking] | [serious] | [amused] | [emphasis] | [idle] | [farewell]",
+                                            "type":  "state",
+                                            "value":  [
+                                                          "idle",
+                                                          "listening",
+                                                          "thinking",
+                                                          "speaking",
+                                                          "emphasis",
+                                                          "amused",
+                                                          "serious",
+                                                          "farewell"
+                                                      ]
+                                        },
+                        "namedAction":  {
+                                            "marker":  "[gesture:TwoThumbsUp_01] or [action:TwoThumbsUp_01] or [TwoThumbsUp_01]",
+                                            "type":  "action",
+                                            "valueExamples":  [
+                                                                  "TwoThumbsUp_01",
+                                                                  "SpeakingDescribeSize_01",
+                                                                  "Laughing_01"
+                                                              ]
+                                        }
+                    },
+    "actions":  [
+                    {
+                        "id":  "BigShrug_01",
+                        "description":  "large shrug â€” uncertainty or resignation"
+                    },
+                    {
+                        "id":  "Concerned_01",
+                        "description":  "concerned expression / posture"
+                    },
+                    {
+                        "id":  "Concerned_02",
+                        "description":  "alternate concerned beat"
+                    },
+                    {
+                        "id":  "DescribingTheGeorgette_01",
+                        "description":  "specialty: only when answering about the Georgette herself — prefer SpeakingDescribeSequence_01 / SpeakingCalmExplanation for general wreck talk"
+                    },
+                    {
+                        "id":  "DescribingWereYouAfraid_01",
+                        "description":  "specialty: only when answering were-you-afraid directly — else Concerned_01 or ThinkingDeepBreath_01"
+                    },
+                    {
+                        "id":  "DescribingWereYouAfraid_02",
+                        "description":  "specialty alternate for were-you-afraid — do not use as generic fear beat"
+                    },
+                    {
+                        "id":  "DescribingWhatGraceBusselWasLike_01",
+                        "description":  "specialty: only when describing Grace Bussell — else SpeakingDescribeSequence_01"
+                    },
+                    {
+                        "id":  "DescribingWhatHappenedThatNight_01",
+                        "description":  "specialty long beat for that-night story only — prefer SpeakingDescribeSequence_01 / SpeakingExplainDanger_01 for shorter answers"
+                    },
+                    {
+                        "id":  "DescribingWhatVisitorsShouldRemember_01",
+                        "description":  "specialty: only when asked what visitors should remember"
+                    },
+                    {
+                        "id":  "DescribingWhatYouWouldDoDifferently_01",
+                        "description":  "specialty: only when asked what you would do differently"
+                    },
+                    {
+                        "id":  "FarewellFinishSpeaking_01",
+                        "description":  "finish speaking before farewell"
+                    },
+                    {
+                        "id":  "FarewellNod_01",
+                        "description":  "farewell nod"
+                    },
+                    {
+                        "id":  "FarewellRelaxPosture_01",
+                        "description":  "relax posture for farewell"
+                    },
+                    {
+                        "id":  "FarewellWave_01",
+                        "description":  "farewell wave goodbye"
+                    },
+                    {
+                        "id":  "GreetingHaveASeat_01",
+                        "description":  "invite visitor to sit"
+                    },
+                    {
+                        "id":  "GreetingNod_01",
+                        "description":  "greeting nod"
+                    },
+                    {
+                        "id":  "GreetingSmallSmile_01",
+                        "description":  "greeting small smile"
+                    },
+                    {
+                        "id":  "GreetingTurnToVisitor_01",
+                        "description":  "turn from sea to visitor"
+                    },
+                    {
+                        "id":  "GreetingWelcome_01",
+                        "description":  "welcome greeting"
+                    },
+                    {
+                        "id":  "HandsBehindBack_01",
+                        "description":  "hands behind back â€” formal composure"
+                    },
+                    {
+                        "id":  "HandsClasped_01",
+                        "description":  "hands clasped â€” restrained, formal (avoid with long coat; sleeves may clip â€” prefer HandsBehindBack_01)"
+                    },
+                    {
+                        "id":  "IdleLookingToSea_01",
+                        "description":  "idle gaze toward the sea"
+                    },
+                    {
+                        "id":  "IdleLookingToSea_02",
+                        "description":  "alternate idle sea gaze"
+                    },
+                    {
+                        "id":  "IdleRockingOnFeet_01",
+                        "description":  "subtle rocking on feet while idle"
+                    },
+                    {
+                        "id":  "IdleStanding_01",
+                        "description":  "neutral standing idle"
+                    },
+                    {
+                        "id":  "IdleWeightShift_01",
+                        "description":  "gentle weight shift / breathing idle"
+                    },
+                    {
+                        "id":  "InviteAttention_01",
+                        "description":  "invite visitor attention / beckon"
+                    },
+                    {
+                        "id":  "Laughing_01",
+                        "description":  "laugh â€” dry amusement"
+                    },
+                    {
+                        "id":  "Listening_01",
+                        "description":  "general listening posture"
+                    },
+                    {
+                        "id":  "Listening_02",
+                        "description":  "alternate listening posture"
+                    },
+                    {
+                        "id":  "ListeningAgreeing_01",
+                        "description":  "listening with agreeing nod"
+                    },
+                    {
+                        "id":  "ListeningAttentive_01",
+                        "description":  "attentive listening (default listen enter)"
+                    },
+                    {
+                        "id":  "ListeningConcerned_01",
+                        "description":  "listening with concern"
+                    },
+                    {
+                        "id":  "ListeningCurious_01",
+                        "description":  "curious listening lean-in"
+                    },
+                    {
+                        "id":  "ListeningNodding_01",
+                        "description":  "listening with nodding"
+                    },
+                    {
+                        "id":  "ListeningSympathetic_01",
+                        "description":  "sympathetic listening"
+                    },
+                    {
+                        "id":  "LookBackToVisitor_01",
+                        "description":  "look back to visitor"
+                    },
+                    {
+                        "id":  "LookToSea_01",
+                        "description":  "look out to sea (one-shot)"
+                    },
+                    {
+                        "id":  "QuietSmile_01",
+                        "description":  "quiet restrained smile"
+                    },
+                    {
+                        "id":  "Relief_01",
+                        "description":  "relief / easing tension"
+                    },
+                    {
+                        "id":  "SmallShrug_01",
+                        "description":  "small shrug â€” mild uncertainty"
+                    },
+                    {
+                        "id":  "SpeakingCalmExplanation_01",
+                        "description":  "calm explanatory speaking (default speaking idle)"
+                    },
+                    {
+                        "id":  "SpeakingDescribeDistance_01",
+                        "description":  "gesture describing distance or far away"
+                    },
+                    {
+                        "id":  "SpeakingDescribeSequence_01",
+                        "description":  "gesture describing a sequence of events"
+                    },
+                    {
+                        "id":  "SpeakingDescribeSize_01",
+                        "description":  "gesture describing size or scale"
+                    },
+                    {
+                        "id":  "SpeakingExplainDanger_01",
+                        "description":  "speaking while explaining danger"
+                    },
+                    {
+                        "id":  "SpeakingGentleEmphasis_01",
+                        "description":  "gentle emphasis while speaking"
+                    },
+                    {
+                        "id":  "Surprised_01",
+                        "description":  "brief surprise"
+                    },
+                    {
+                        "id":  "Thinking_01",
+                        "description":  "general thinking posture"
+                    },
+                    {
+                        "id":  "Thinking_02",
+                        "description":  "alternate thinking posture"
+                    },
+                    {
+                        "id":  "ThinkingCoy_01",
+                        "description":  "coy / guarded thinking"
+                    },
+                    {
+                        "id":  "ThinkingDeepBreath_01",
+                        "description":  "thinking with a deep breath"
+                    },
+                    {
+                        "id":  "ThinkingDeepBreath_02",
+                        "description":  "alternate deep-breath thinking"
+                    },
+                    {
+                        "id":  "ThinkingHandToChin_01",
+                        "description":  "hand to chin thinking (default think)"
+                    },
+                    {
+                        "id":  "ThinkingLookingAway_01",
+                        "description":  "thinking while looking away"
+                    },
+                    {
+                        "id":  "ThinkingLookingToSea_01",
+                        "description":  "thinking while looking to sea"
+                    },
+                    {
+                        "id":  "ThinkingRemembering_01",
+                        "description":  "remembering / recollection beat"
+                    },
+                    {
+                        "id":  "ThinkingReturnGaze_01",
+                        "description":  "return gaze after thinking"
+                    },
+                    {
+                        "id":  "TransitionIdleToListening_01",
+                        "description":  "transition idle to listening"
+                    },
+                    {
+                        "id":  "TransitionIdleToLookToSea_01",
+                        "description":  "transition idle to look to sea"
+                    },
+                    {
+                        "id":  "TransitionListeningToThinking_01",
+                        "description":  "transition listening to thinking"
+                    },
+                    {
+                        "id":  "TransitionRelectivePauseResumeSpeaking_01",
+                        "description":  "resume speaking after reflective pause"
+                    },
+                    {
+                        "id":  "TransitionSpeakingToIdle_01",
+                        "description":  "transition speaking to idle"
+                    },
+                    {
+                        "id":  "TransitionSpeakingToReflectivePause_01",
+                        "description":  "speaking to reflective pause"
+                    },
+                    {
+                        "id":  "TransitionThinkingToSpeaking_01",
+                        "description":  "transition thinking to speaking"
+                    },
+                    {
+                        "id":  "TwoThumbsUp_01",
+                        "description":  "approving / affirmative two thumbs up"
+                    }
+                ]
+}

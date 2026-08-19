@@ -32,6 +32,8 @@ const elevenLabsVoiceIdInput = document.getElementById("elevenLabsVoiceIdInput")
 const elevenLabsModelIdInput = document.getElementById("elevenLabsModelIdInput");
 const elevenLabsStabilityInput = document.getElementById("elevenLabsStabilityInput");
 const elevenLabsSimilarityBoostInput = document.getElementById("elevenLabsSimilarityBoostInput");
+const elevenLabsStyleInput = document.getElementById("elevenLabsStyleInput");
+const elevenLabsSpeedInput = document.getElementById("elevenLabsSpeedInput");
 const elevenLabsSpeakerBoostInput = document.getElementById("elevenLabsSpeakerBoostInput");
 const saveSpeechSettingsButton = document.getElementById("saveSpeechSettingsButton");
 const applyBritishPresetButton = document.getElementById("applyBritishPresetButton");
@@ -59,6 +61,22 @@ const saveResponseSettingsAdminButton = document.getElementById("saveResponseSet
 const responseSettingsStatus = document.getElementById("responseSettingsStatus");
 const adminTestBypassInput = document.getElementById("adminTestBypassInput");
 const saveAdminTestBypassButton = document.getElementById("saveAdminTestBypassButton");
+const occasionSelect = document.getElementById("occasionSelect");
+const occasionPreview = document.getElementById("occasionPreview");
+const occasionIdInput = document.getElementById("occasionIdInput");
+const occasionTitleInput = document.getElementById("occasionTitleInput");
+const occasionRecipientInput = document.getElementById("occasionRecipientInput");
+const occasionNotesInput = document.getElementById("occasionNotesInput");
+const occasionConversationEndInput = document.getElementById("occasionConversationEndInput");
+const occasionGeneratePrompt = document.getElementById("occasionGeneratePrompt");
+const occasionGenerateMaxWords = document.getElementById("occasionGenerateMaxWords");
+const generateOccasionButton = document.getElementById("generateOccasionButton");
+const newOccasionButton = document.getElementById("newOccasionButton");
+const saveOccasionButton = document.getElementById("saveOccasionButton");
+const deleteOccasionButton = document.getElementById("deleteOccasionButton");
+const refreshOccasionsButton = document.getElementById("refreshOccasionsButton");
+const queueOccasionButton = document.getElementById("queueOccasionButton");
+const occasionStatus = document.getElementById("occasionStatus");
 const adminTestBypassStatus = document.getElementById("adminTestBypassStatus");
 const adminTestBypassBanner = document.getElementById("adminTestBypassBanner");
 const continueReplyRow = document.getElementById("continueReplyRow");
@@ -87,6 +105,9 @@ const DEFAULT_SPLASH_SETTINGS = { t1Ms: 1000, t2Ms: 1000 };
 let splashSettings = { ...DEFAULT_SPLASH_SETTINGS };
 let responseSettings = { maxWords: 120 };
 let adminTestBypassSettings = { bypassAi: false, sampleAudioReady: false };
+let occasionScriptsById = {};
+/** When true, the form is for creating a new occasion (id editable). */
+let occasionEditorIsNew = false;
 /** Milliseconds of quiet after the Captain's last reply before a single in-character nudge (display only). */
 const IDLE_NUDGE_MS = 120000;
 let idleNudgeTimer = null;
@@ -395,7 +416,7 @@ function trackError(errorType) {
 
 const SPEECH_SETTINGS_KEY = "godfrey-speech-settings-v1";
 const BRITISH_EXPRESSION_PRESET =
-  "Use clear British English pronunciation (Received Pronunciation leaning), non-rhotic R, formal Victorian diction, measured naval cadence, restrained bitterness, and dignified emotional control.";
+  "Use clear British English pronunciation (Received Pronunciation leaning), non-rhotic R, formal Victorian diction, measured naval cadence, restrained bitterness, and dignified emotional control. When not speaking, resting face is neutral and composed — not a persistent frown. Avoid sounding mournful unless the line is explicitly about loss or guilt.";
 const defaultSpeechSettings = {
   mode: "none",
   expressionPrompt: BRITISH_EXPRESSION_PRESET,
@@ -413,9 +434,11 @@ const defaultSpeechSettings = {
   elevenlabs: {
     apiKey: "",
     voiceId: "",
-    modelId: "eleven_multilingual_v2",
-    stability: 0.5,
-    similarityBoost: 0.75,
+    modelId: "eleven_turbo_v2_5",
+    stability: 0.4,
+    similarityBoost: 0.8,
+    style: 0.3,
+    speed: 1.0,
     speakerBoost: true,
   },
 };
@@ -504,39 +527,13 @@ function clearIdleNudgeTimer() {
 }
 
 function scheduleIdleNudge() {
+  // Disabled: idle re-engagement must be initiated by Unreal (game), not the Brain web UI.
+  // Previous behaviour (120s quiet → speakAssistantReply) could produce unsolicited TTS.
   clearIdleNudgeTimer();
-  if (isAdminTestBypassActive()) {
-    return;
-  }
-  const last = conversation[conversation.length - 1];
-  if (!last || last.role !== "assistant" || nudgedSinceLastUserTurn) {
-    return;
-  }
-  idleNudgeTimer = setTimeout(() => {
-    idleNudgeTimer = null;
-    if (document.hidden || isSending || nudgedSinceLastUserTurn) {
-      return;
-    }
-    const lastAgain = conversation[conversation.length - 1];
-    if (!lastAgain || lastAgain.role !== "assistant") {
-      return;
-    }
-    const line = IDLE_NUDGE_LINES[Math.floor(Math.random() * IDLE_NUDGE_LINES.length)];
-    appendMessage("assistant", line);
-    void speakAssistantReply(line);
-    nudgedSinceLastUserTurn = true;
-  }, IDLE_NUDGE_MS);
 }
 
 function bumpIdleNudgeAfterUserActivity() {
   clearIdleNudgeTimer();
-  if (isAdminTestBypassActive() || nudgedSinceLastUserTurn) {
-    return;
-  }
-  const last = conversation[conversation.length - 1];
-  if (last && last.role === "assistant") {
-    scheduleIdleNudge();
-  }
 }
 
 function setTyping(isTyping) {
@@ -586,6 +583,336 @@ function setAdminTestBypassStatus(message, isError = false) {
   if (!adminTestBypassStatus) return;
   adminTestBypassStatus.textContent = message;
   adminTestBypassStatus.style.color = isError ? "#e3a0a0" : "";
+}
+
+function setOccasionStatus(message, isError = false) {
+  if (!occasionStatus) return;
+  occasionStatus.textContent = message;
+  occasionStatus.style.color = isError ? "#e3a0a0" : "";
+}
+
+function setOccasionFormEnabled(enabled, { idEditable = false } = {}) {
+  const on = Boolean(enabled);
+  if (occasionIdInput) occasionIdInput.disabled = !(on && idEditable);
+  if (occasionTitleInput) occasionTitleInput.disabled = !on;
+  if (occasionRecipientInput) occasionRecipientInput.disabled = !on;
+  if (occasionNotesInput) occasionNotesInput.disabled = !on;
+  if (occasionConversationEndInput) occasionConversationEndInput.disabled = !on;
+  if (occasionPreview) occasionPreview.disabled = !on;
+}
+
+function clearOccasionForm() {
+  if (occasionIdInput) occasionIdInput.value = "";
+  if (occasionTitleInput) occasionTitleInput.value = "";
+  if (occasionRecipientInput) occasionRecipientInput.value = "";
+  if (occasionNotesInput) occasionNotesInput.value = "";
+  if (occasionConversationEndInput) occasionConversationEndInput.checked = false;
+  if (occasionPreview) occasionPreview.value = "";
+}
+
+function fillOccasionForm(data) {
+  if (occasionIdInput) occasionIdInput.value = data?.id || "";
+  if (occasionTitleInput) occasionTitleInput.value = data?.title || "";
+  if (occasionRecipientInput) occasionRecipientInput.value = data?.recipient || "";
+  if (occasionNotesInput) occasionNotesInput.value = data?.notes || "";
+  if (occasionConversationEndInput) {
+    occasionConversationEndInput.checked = data?.conversationEnd === true;
+  }
+  if (occasionPreview) occasionPreview.value = data?.text || "";
+}
+
+function readOccasionForm() {
+  return {
+    id: (occasionIdInput?.value || "").trim(),
+    title: (occasionTitleInput?.value || "").trim(),
+    recipient: (occasionRecipientInput?.value || "").trim(),
+    notes: (occasionNotesInput?.value || "").trim(),
+    conversationEnd: occasionConversationEndInput?.checked === true,
+    text: (occasionPreview?.value || "").trim(),
+  };
+}
+
+function startNewOccasion() {
+  if (!isAdmin) return;
+  occasionEditorIsNew = true;
+  if (occasionSelect) occasionSelect.value = "";
+  clearOccasionForm();
+  setOccasionFormEnabled(true, { idEditable: true });
+  occasionIdInput?.focus();
+  setOccasionStatus("New occasion — enter a kebab-case id, fill the script, then Save.");
+}
+
+async function generateOccasionFromPrompt() {
+  if (!isAdmin) return;
+  const prompt = (occasionGeneratePrompt?.value || "").trim();
+  if (!prompt) {
+    setOccasionStatus("Enter a prompt describing the occasion speech to generate.", true);
+    occasionGeneratePrompt?.focus();
+    return;
+  }
+  if (
+    occasionPreview?.value?.trim() &&
+    !window.confirm("Replace the current script text with a newly generated draft?")
+  ) {
+    return;
+  }
+
+  const maxWordsRaw = occasionGenerateMaxWords?.value;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 25000);
+  if (generateOccasionButton) generateOccasionButton.disabled = true;
+  try {
+    setOccasionStatus("Asking the brain to draft the occasion script…");
+    const response = await fetch("/api/admin/occasions/generate", {
+      ...fetchOpts,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        prompt,
+        maxWords:
+          maxWordsRaw !== undefined && String(maxWordsRaw).trim() !== ""
+            ? Number(maxWordsRaw)
+            : undefined,
+      }),
+    });
+    const rawBody = await response.text();
+    let data = {};
+    try {
+      data = rawBody ? JSON.parse(rawBody) : {};
+    } catch {
+      throw new Error(
+        response.status === 404
+          ? "Generate API not found (404). Restart the Godfrey Brain (node server.js) to load the new route."
+          : `Generate failed (HTTP ${response.status}). Server returned non-JSON.`
+      );
+    }
+    if (!response.ok) {
+      throw new Error(data.error || "Failed to generate occasion script.");
+    }
+    if (!data.text) {
+      throw new Error("Brain returned an empty script.");
+    }
+
+    const editingExisting = !occasionEditorIsNew && Boolean(occasionSelect?.value);
+    if (!editingExisting) {
+      occasionEditorIsNew = true;
+      if (occasionSelect) occasionSelect.value = "";
+      setOccasionFormEnabled(true, { idEditable: true });
+      if (occasionIdInput && !occasionIdInput.value.trim() && data.suggestedId) {
+        occasionIdInput.value = data.suggestedId;
+      }
+      if (occasionTitleInput && !occasionTitleInput.value.trim() && data.suggestedTitle) {
+        occasionTitleInput.value = data.suggestedTitle;
+      }
+      if (occasionNotesInput && !occasionNotesInput.value.trim()) {
+        occasionNotesInput.value = `Generated from operator prompt (${data.provider || "llm"}).`;
+      }
+    }
+
+    if (occasionPreview) {
+      occasionPreview.value = data.text;
+      setOccasionFormEnabled(true, { idEditable: occasionEditorIsNew });
+    }
+
+    setOccasionStatus(
+      `${data.message || "Draft ready."} Provider: ${data.provider || "unknown"}. Review, edit, then Save.`
+    );
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      setOccasionStatus("Generate timed out. Try again, or shorten the prompt.", true);
+    } else {
+      setOccasionStatus(error.message || "Failed to generate occasion script.", true);
+    }
+  } finally {
+    clearTimeout(timeoutId);
+    if (generateOccasionButton) generateOccasionButton.disabled = false;
+  }
+}
+
+async function loadOccasionScripts(selectId = null) {
+  if (!isAdmin || !occasionSelect) return;
+  try {
+    const response = await fetch("/api/admin/occasions", fetchOpts);
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Unable to load occasion scripts.");
+    }
+    const occasions = Array.isArray(data.occasions) ? data.occasions : [];
+    occasionScriptsById = {};
+    const preferred =
+      typeof selectId === "string" && selectId
+        ? selectId
+        : occasionEditorIsNew
+          ? ""
+          : occasionSelect.value;
+    occasionSelect.innerHTML = '<option value="">— Select an occasion —</option>';
+    for (const item of occasions) {
+      occasionScriptsById[item.id] = item;
+      const opt = document.createElement("option");
+      opt.value = item.id;
+      opt.textContent = item.recipient ? `${item.title} (${item.recipient})` : item.title;
+      occasionSelect.appendChild(opt);
+    }
+    if (preferred && occasionScriptsById[preferred]) {
+      occasionSelect.value = preferred;
+      occasionEditorIsNew = false;
+    } else if (!occasionEditorIsNew) {
+      occasionSelect.value = "";
+    }
+    await refreshOccasionPreview();
+    setOccasionStatus(
+      occasions.length
+        ? `${occasions.length} occasion script${occasions.length === 1 ? "" : "s"} loaded.`
+        : "No occasion scripts found in occasions/."
+    );
+  } catch (error) {
+    setOccasionStatus(error.message || "Unable to load occasion scripts.", true);
+  }
+}
+
+async function refreshOccasionPreview() {
+  if (occasionEditorIsNew) {
+    setOccasionFormEnabled(true, { idEditable: true });
+    return;
+  }
+  const id = occasionSelect?.value || "";
+  if (!id) {
+    clearOccasionForm();
+    setOccasionFormEnabled(false);
+    return;
+  }
+  try {
+    const response = await fetch(`/api/admin/occasions/${encodeURIComponent(id)}`, fetchOpts);
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Unable to load occasion.");
+    }
+    occasionScriptsById[id] = { ...(occasionScriptsById[id] || {}), ...data };
+    fillOccasionForm(data);
+    setOccasionFormEnabled(true, { idEditable: false });
+  } catch (error) {
+    clearOccasionForm();
+    setOccasionFormEnabled(false);
+    setOccasionStatus(error.message || "Unable to load occasion.", true);
+  }
+}
+
+async function saveOccasionScript() {
+  if (!isAdmin) return;
+  const fields = readOccasionForm();
+  if (!fields.id) {
+    setOccasionStatus("Id is required (lowercase kebab-case).", true);
+    return;
+  }
+  if (!fields.text) {
+    setOccasionStatus("Script text is required.", true);
+    return;
+  }
+  const creating = occasionEditorIsNew || !occasionScriptsById[fields.id];
+  try {
+    setOccasionStatus(creating ? "Creating…" : "Saving…");
+    const url = creating
+      ? "/api/admin/occasions"
+      : `/api/admin/occasions/${encodeURIComponent(fields.id)}`;
+    const response = await fetch(url, {
+      ...fetchOpts,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(fields),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Failed to save occasion.");
+    }
+    occasionEditorIsNew = false;
+    await loadOccasionScripts(data.id || fields.id);
+    setOccasionStatus(
+      creating
+        ? `Created “${data.title || fields.id}”.`
+        : `Saved “${data.title || fields.id}”.`
+    );
+  } catch (error) {
+    setOccasionStatus(error.message || "Failed to save occasion.", true);
+  }
+}
+
+async function deleteSelectedOccasion() {
+  if (!isAdmin) return;
+  if (occasionEditorIsNew) {
+    occasionEditorIsNew = false;
+    clearOccasionForm();
+    setOccasionFormEnabled(false);
+    if (occasionSelect) occasionSelect.value = "";
+    setOccasionStatus("Discarded new occasion draft.");
+    return;
+  }
+  const id = occasionSelect?.value || occasionIdInput?.value?.trim() || "";
+  if (!id) {
+    setOccasionStatus("Select an occasion to delete.", true);
+    return;
+  }
+  const title = occasionTitleInput?.value?.trim() || id;
+  if (!window.confirm(`Delete occasion “${title}” (${id}.md)? This cannot be undone.`)) {
+    return;
+  }
+  try {
+    setOccasionStatus("Deleting…");
+    const response = await fetch(`/api/admin/occasions/${encodeURIComponent(id)}/delete`, {
+      ...fetchOpts,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Failed to delete occasion.");
+    }
+    occasionEditorIsNew = false;
+    await loadOccasionScripts("");
+    setOccasionStatus(`Deleted “${title}”.`);
+  } catch (error) {
+    setOccasionStatus(error.message || "Failed to delete occasion.", true);
+  }
+}
+
+async function queueSelectedOccasion() {
+  if (!isAdmin) return;
+  const fields = readOccasionForm();
+  const id = occasionSelect?.value || fields.id;
+  if (!id && !fields.text) {
+    setOccasionStatus("Select or write an occasion script first.", true);
+    return;
+  }
+  try {
+    setOccasionStatus("Queuing for Unreal…");
+    const body = occasionEditorIsNew || !occasionScriptsById[id]
+      ? {
+          text: fields.text,
+          conversationEnd: fields.conversationEnd,
+        }
+      : {
+          occasionId: id,
+          // Queue the editor contents so unsaved edits can still be previewed in Unreal.
+          text: fields.text || undefined,
+          conversationEnd: fields.conversationEnd,
+        };
+    const response = await fetch("/api/admin/occasions/speak", {
+      ...fetchOpts,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Failed to queue occasion.");
+    }
+    setOccasionStatus(
+      `Queued “${data.title || id || "draft"}” for Unreal (requestId ${String(data.requestId || "").slice(0, 8)}…). ${data.message || ""}`
+    );
+  } catch (error) {
+    setOccasionStatus(error.message || "Failed to queue occasion.", true);
+  }
 }
 
 function applyAdminTestBypassToInputs() {
@@ -657,8 +984,12 @@ async function loadSplashSettings() {
 }
 
 function applyResponseSettingsToInputs() {
-  if (!maxReplyWordsInput) return;
-  maxReplyWordsInput.value = String(responseSettings.maxWords);
+  if (maxReplyWordsInput) {
+    maxReplyWordsInput.value = String(responseSettings.maxWords);
+  }
+  if (occasionGenerateMaxWords && !occasionGenerateMaxWords.dataset.userEdited) {
+    occasionGenerateMaxWords.value = String(responseSettings.maxWords);
+  }
 }
 
 async function loadResponseSettings() {
@@ -827,6 +1158,7 @@ async function checkAdminSession() {
     loadElevenLabsSettings();
     loadResponseSettings();
     loadAdminTestBypassSettings();
+    loadOccasionScripts();
   }
 }
 
@@ -858,6 +1190,7 @@ async function adminLogin() {
     loadElevenLabsSettings();
     loadResponseSettings();
     loadAdminTestBypassSettings();
+    loadOccasionScripts();
   } catch (error) {
     setAdminAuthStatus(error.message || "Sign-in failed.", true);
   }
@@ -949,9 +1282,11 @@ function readSpeechSettingsFromInputs() {
     elevenlabs: {
       apiKey: elevenLabsApiKeyInput.value.trim(),
       voiceId: elevenLabsVoiceIdInput.value.trim(),
-      modelId: elevenLabsModelIdInput.value.trim() || "eleven_multilingual_v2",
+      modelId: elevenLabsModelIdInput.value.trim() || "eleven_turbo_v2_5",
       stability: Number(elevenLabsStabilityInput.value),
       similarityBoost: Number(elevenLabsSimilarityBoostInput.value),
+      style: Number(elevenLabsStyleInput.value),
+      speed: Number(elevenLabsSpeedInput.value),
       speakerBoost: Boolean(elevenLabsSpeakerBoostInput.checked),
     },
   };
@@ -971,6 +1306,8 @@ function applySpeechSettingsToInputs() {
   elevenLabsModelIdInput.value = speechSettings.elevenlabs.modelId;
   elevenLabsStabilityInput.value = String(speechSettings.elevenlabs.stability);
   elevenLabsSimilarityBoostInput.value = String(speechSettings.elevenlabs.similarityBoost);
+  elevenLabsStyleInput.value = String(speechSettings.elevenlabs.style);
+  elevenLabsSpeedInput.value = String(speechSettings.elevenlabs.speed);
   elevenLabsSpeakerBoostInput.checked = Boolean(speechSettings.elevenlabs.speakerBoost);
 
   if (speechSettings.simple.voiceName && simpleSpeechVoices.some((v) => v.name === speechSettings.simple.voiceName)) {
@@ -1034,6 +1371,8 @@ async function loadElevenLabsSettings() {
       similarityBoost: Number.isFinite(Number(data.similarityBoost))
         ? Number(data.similarityBoost)
         : speechSettings.elevenlabs.similarityBoost,
+      style: Number.isFinite(Number(data.style)) ? Number(data.style) : speechSettings.elevenlabs.style,
+      speed: Number.isFinite(Number(data.speed)) ? Number(data.speed) : speechSettings.elevenlabs.speed,
       speakerBoost: data.speakerBoost !== false,
       apiKey: data.hasApiKey ? "********" : "",
     };
@@ -1084,6 +1423,8 @@ async function saveElevenLabsSettings() {
         similarityBoost: Number.isFinite(Number(data.similarityBoost))
           ? Number(data.similarityBoost)
           : latest.elevenlabs.similarityBoost,
+        style: Number.isFinite(Number(data.style)) ? Number(data.style) : latest.elevenlabs.style,
+        speed: Number.isFinite(Number(data.speed)) ? Number(data.speed) : latest.elevenlabs.speed,
         speakerBoost: data.speakerBoost !== false,
       },
     };
@@ -1354,6 +1695,8 @@ async function speakWithElevenLabs(text, replyRow, hooks = null) {
           modelId: speechSettings.elevenlabs.modelId,
           stability: speechSettings.elevenlabs.stability,
           similarityBoost: speechSettings.elevenlabs.similarityBoost,
+          style: speechSettings.elevenlabs.style,
+          speed: speechSettings.elevenlabs.speed,
           speakerBoost: speechSettings.elevenlabs.speakerBoost,
         },
       }),
@@ -2114,6 +2457,48 @@ if (saveResponseSettingsAdminButton) {
 if (saveAdminTestBypassButton) {
   saveAdminTestBypassButton.addEventListener("click", () => {
     saveAdminTestBypassSettings();
+  });
+}
+if (refreshOccasionsButton) {
+  refreshOccasionsButton.addEventListener("click", () => {
+    occasionEditorIsNew = false;
+    loadOccasionScripts();
+  });
+}
+if (occasionSelect) {
+  occasionSelect.addEventListener("change", () => {
+    occasionEditorIsNew = false;
+    refreshOccasionPreview();
+  });
+}
+if (newOccasionButton) {
+  newOccasionButton.addEventListener("click", () => {
+    startNewOccasion();
+  });
+}
+if (generateOccasionButton) {
+  generateOccasionButton.addEventListener("click", () => {
+    generateOccasionFromPrompt();
+  });
+}
+if (occasionGenerateMaxWords) {
+  occasionGenerateMaxWords.addEventListener("input", () => {
+    occasionGenerateMaxWords.dataset.userEdited = "1";
+  });
+}
+if (saveOccasionButton) {
+  saveOccasionButton.addEventListener("click", () => {
+    saveOccasionScript();
+  });
+}
+if (deleteOccasionButton) {
+  deleteOccasionButton.addEventListener("click", () => {
+    deleteSelectedOccasion();
+  });
+}
+if (queueOccasionButton) {
+  queueOccasionButton.addEventListener("click", () => {
+    queueSelectedOccasion();
   });
 }
 

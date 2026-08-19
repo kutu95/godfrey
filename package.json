@@ -7,6 +7,7 @@
     "test-parse-performance": "node lib/performance-text.js",
     "test-segment-speech": "node lib/segment-godfrey-speech.js",
     "start": "node server.js",
+    "speak-occasion": "node scripts/speak-occasion.js",
     "upload-docs": "node upload-docs.js",
     "upload-openai-docs": "node upload-openai-docs.js"
   },
@@ -17,6 +18,7 @@
     "express-session": "^1.19.0",
     "form-data": "latest",
     "openai": "latest",
-    "pdfkit": "^0.18.0"
+    "pdfkit": "^0.18.0",
+    "ws": "^8.21.1"
   }
 }

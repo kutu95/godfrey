@@ -1,5 +1,11 @@
 {
-  "bypassAi": true,
-  "sampleGeneratedAt": "2026-06-28T15:15:15.533Z",
-  "sampleSourceText": "It is I, Captain John Godfrey, Master of the Georgette, husband of Joanna, father of six children and scapegoat for a sunken ship."
+  "bypassAi": false,
+  "sampleGeneratedAt": "2026-08-08T01:29:10.967Z",
+  "sampleSourceText": "It is I, Captain John Godfrey, Master of the Georgette, husband of Joanna, father of six children and scapegoat for a sunken ship.",
+  "sampleVoiceId": "bFEu7NSVZzHAtQPj0F9R",
+  "sampleModelId": "eleven_turbo_v2_5",
+  "sampleStability": 0.4,
+  "sampleSimilarityBoost": 0.8,
+  "sampleStyle": 0.3,
+  "sampleSpeed": 1
 }

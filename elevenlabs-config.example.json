@@ -1,8 +1,10 @@
 {
   "apiKey": "",
-  "voiceId": "your_elevenlabs_voice_id_here",
-  "modelId": "eleven_multilingual_v2",
-  "stability": 0.5,
-  "similarityBoost": 0.75,
+  "voiceId": "bFEu7NSVZzHAtQPj0F9R",
+  "modelId": "eleven_turbo_v2_5",
+  "stability": 0.4,
+  "similarityBoost": 0.8,
+  "style": 0.3,
+  "speed": 1.0,
   "speakerBoost": true
 }

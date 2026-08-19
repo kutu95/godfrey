@@ -1,0 +1,6 @@
+---
+description: (Rolled back) Exhibition TTS sentence segmentation — not active; one queue item per reply.
+alwaysApply: false
+---
+
+See `.cursor/rules/godfrey-unreal-exhibition-tts-segmentation.mdc` — segmentation is rolled back; exhibition mode uses one queue item per reply.

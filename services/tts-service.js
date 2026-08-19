@@ -1,4 +1,4 @@
-const ELEVENLABS_DEFAULT_MODEL_ID = "eleven_multilingual_v2";
+const ELEVENLABS_DEFAULT_MODEL_ID = "eleven_turbo_v2_5";
 
 function clampNumber(value, min, max, fallback) {
   const parsed = Number(value);
@@ -16,9 +16,21 @@ function sanitizeElevenLabsSettings(input) {
       typeof input?.modelId === "string" && input.modelId.trim().length > 0
         ? input.modelId.trim()
         : ELEVENLABS_DEFAULT_MODEL_ID,
-    stability: clampNumber(input?.stability, 0, 1, 0.5),
-    similarityBoost: clampNumber(input?.similarityBoost, 0, 1, 0.75),
+    stability: clampNumber(input?.stability, 0, 1, 0.4),
+    similarityBoost: clampNumber(input?.similarityBoost, 0, 1, 0.8),
+    style: clampNumber(input?.style, 0, 1, 0.3),
+    speed: clampNumber(input?.speed, 0.25, 4, 1.0),
     speakerBoost: input?.speakerBoost !== false,
+  };
+}
+
+function buildElevenLabsVoiceSettings(settings) {
+  return {
+    stability: settings.stability,
+    similarity_boost: settings.similarityBoost,
+    style: settings.style,
+    speed: settings.speed,
+    use_speaker_boost: Boolean(settings.speakerBoost),
   };
 }
 
@@ -100,11 +112,7 @@ async function synthesizeElevenLabs({ text, settings, outputFormat = "mp3_44100_
       text: inputText,
       model_id: settings.modelId || ELEVENLABS_DEFAULT_MODEL_ID,
       output_format: outputFormat,
-      voice_settings: {
-        stability: settings.stability,
-        similarity_boost: settings.similarityBoost,
-        use_speaker_boost: Boolean(settings.speakerBoost),
-      },
+      voice_settings: buildElevenLabsVoiceSettings(settings),
     }),
   });
 
@@ -126,6 +134,7 @@ async function synthesizeElevenLabs({ text, settings, outputFormat = "mp3_44100_
 module.exports = {
   ELEVENLABS_DEFAULT_MODEL_ID,
   sanitizeElevenLabsSettings,
+  buildElevenLabsVoiceSettings,
   synthesizeOpenAI,
   synthesizeElevenLabs,
 };
