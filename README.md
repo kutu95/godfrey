@@ -37,22 +37,27 @@ restarting. If the WebSocket cannot be opened, the Brain falls back to the
 original HTTP path on its own.
 
 See `SPEECH_PIPELINE.md` for the engineering detail behind this path: cue stripping,
-the reply word cap, model choices, and why response caching was rejected.
+reply length (no hard word quota on live speech), model choices, and why response caching was rejected.
 
 ### Visitor memory within an encounter
 
-The direct exhibition path sends one utterance at a time with no conversation history, so
-`lib/visitor-profile.js` keeps a small in-memory profile per encounter — the visitor's name,
-whether they have been to sea, places they know, and which questions Godfrey has already
-put to them — and renders it into the prompt. This is what lets him remember a name, pitch
-his sea-talk to the person in front of him, and avoid asking the same thing twice.
+The direct exhibition path keeps two things in memory for the person in front of him:
+a small profile (`lib/visitor-profile.js`) and the last few exchanges (about four turns).
+The profile holds the visitor's name, whether they have been to sea, places they know, and
+which questions Godfrey has already put to them. The recent-turn window is sent as chat
+history so he can hear what was just said, not only the facts the extractors caught. Together
+that is what lets him remember a name, pitch his sea-talk, and avoid asking the same thing
+twice. The window is dropped on goodbye, webcam leave, or after a long idle gap (ten minutes —
+long enough that a wreck telling cannot wipe the name before they answer), so the next person
+is a stranger.
 
 A small watchlist (`config/notable-visitors.json`) can also recognise a known visitor from
-what they say — not from the webcam. Given name on the list (e.g. Marcia) makes him ask
-for the family name once; a confirmed surname (with speech-to-text aliases) plays the
-authored occasion `occasions/marcia-van-zeller.md` verbatim, once, then remembers them for
-the rest of the encounter. Staff can still queue that occasion from Admin if the mic misses
-the name.
+what they say — not from the webcam. Given name on the list (e.g. Marcia, Stef) makes him
+ask for the family name once; a confirmed surname (with speech-to-text aliases) plays the
+matching authored occasion verbatim, once, then remembers them for the rest of the
+encounter. Do not put common given names on the list. Staff can still queue an occasion
+from Admin if the mic misses the name. Current watchlist scripts:
+`occasions/marcia-van-zeller.md`, `occasions/stef-koens.md`.
 
 Profiles are memory-only and never written to disk. Session logs in `logs/` are unchanged
 and still record what visitors said verbatim.
@@ -61,7 +66,7 @@ and still record what visitors said verbatim.
 
 ElevenLabs reads the spoken line after performance cues are stripped. Bracket notes such as
 `[pronounced VASS]` never reach the voice. To correct a misread name, add a whole-word pair
-in `config/tts-pronunciations.json` (`Vasse` → `Vass`, `Marcia` → `Mar-see-ah`). Logs and
+in `config/tts-pronunciations.json` (`Vasse` → `Vas`, `Jarrah` → `Jar-uh`, `Naturaliste` → `Naturalist`, `Marcia` → `Mar-see-ah`). Logs and
 Unreal still see the original spelling; only the TTS payload is rewritten. Restart the Brain
 after editing that file.
 
@@ -69,7 +74,7 @@ A profile is cleared when the visitor says goodbye, and after an idle gap on the
 client, so the next person to walk up is a stranger:
 
 ```env
-GODFREY_VISITOR_SESSION_IDLE_MS=90000
+GODFREY_VISITOR_SESSION_IDLE_MS=600000
 ```
 
 Check the extraction heuristics after editing them:
@@ -80,7 +85,15 @@ node scripts/check-visitor-profile.js
 
 ## 3) Add source documents
 
-Place your PDF files in the `docs/` folder.
+Place source files in the `docs/` folder (`.pdf`, `.md`, `.txt` in the folder root).
+
+**Do not upload the full van Zeller thesis PDF** once `docs/van-zeller-synthesis.md` is present. That PDF contains the novel *Cruel Capes*; live context uses the exegesis distillation only. The upload scripts skip `228543_VanZeller 2015.pdf` automatically in that case. Keep the PDF on disk as archive.
+
+**Do not upload the inquiry transcript PDF** once `docs/georgette-inquiry-1876.md` is present. Live context uses that distillation. The upload scripts skip `georgette inquiry transcript (2).pdf` automatically in that case. Keep the PDF on disk as archive.
+
+**Do not dump** `P:\Godfrey\docs\Text_Docs` into `docs/`. Distill only. Do not upload Annie Simpson’s 1919/1928 letters, novels, `georgette_passenger_manifest_reconciliation.md` (it guessed Osborne survived; verified-facts keeps eight dead), or the raw Dempster/Argus wreck notices (they say 20 in the gig and 58 aboard). The official gig list is `docs/godfrey-gig-manifest-1876.md`. The night sequence is `docs/godfrey-night-of-the-wreck.md`.
+
+`docs/_notes/` is not uploaded (the scripts do not recurse).
 
 ## 4) Upload PDFs for Anthropic (one-time per document set)
 
@@ -250,7 +263,8 @@ Use the same pattern for `openai-file-ids.json` if that file was modified only o
 - The app remembers your last selected provider in `provider-config.json` and uses it after restart.
 - Anthropic context comes from `file-ids.json` (uploaded via `upload-docs.js`).
 - OpenAI context comes from `openai-file-ids.json` and its vector store (uploaded via `upload-openai-docs.js`).
-- Document files are sent on the first turn by default, then omitted on later turns for speed.
+- Document files are sent on the first **web** turn by default, then omitted on later turns for speed.
+- Exhibition Unreal (`/api/godfrey/speak/stream-pcm`) only attaches the vector store for wreck / board / named-ship questions — not Welcome, quiet-nudge, farewell, or small talk. Force off with `GODFREY_STREAM_PCM_INCLUDE_DOCUMENTS=false`.
 - Use "Refresh Document Context (Next Reply)" in the UI when you want the next response to include document context again.
 - The chat input includes a Dictate button for browser speech-to-text (when supported).
 - Speech settings now support four playback modes: no speech, simple browser speech, OpenAI speech, and ElevenLabs speech.

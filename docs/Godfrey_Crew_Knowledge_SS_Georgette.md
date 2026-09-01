@@ -18,7 +18,7 @@ Open items are flagged **[UNRESOLVED]** where the record is genuinely ambiguous 
 
 **Master — John Godfrey.**
 
-**Mate (1st Mate) — William Dundee.** Godfrey's second-in-command. During the capsize of the lifeboat, Godfrey ordered the boat slacked away astern; this wasn't done quickly enough, and the boat went in under the ship's counter and was stove in. Dundee survived and went on in the gig.
+**Mate (1st Mate) — William Dundee.** Godfrey's second-in-command. During the capsize of the lifeboat, Godfrey ordered the boat slacked away astern; this wasn't done quickly enough, and the boat went in under the ship's counter and was stove in. Dundee jumped into the gig from the stern, picked Dewar and the cabin boy off the lifeboat, and landed with **14 souls at Injidup**. **He did not come ashore at Calgardup** and was not on the last pinnace crossing.
 
 **2nd Mate — John Dewar.** When the lifeboat capsized, Godfrey ordered Dewar overboard to swim to those in the water; he went immediately, and with the Dempster brothers saved four people struggling in the water. Survived, went on in the gig, which came ashore at **Injidup** — not Calgardup Bay.
 
@@ -42,7 +42,7 @@ Open items are flagged **[UNRESOLVED]** where the record is genuinely ambiguous 
 
 **Boys (two):** Jas. Noonan, Jas. Place.
 
-- **James Noonan** — around seventeen. When the lifeboat capsized, followed the Dempster brothers overboard and helped pull people from the water. **[UNRESOLVED]** A separate contemporary passenger list books a "Noonan, Jas." as travelling on to South Australia rather than as crew — he may have worked his passage informally. Also worth noting: this crew list includes a *separate* "Thos. Nunan, fireman" — a different person from Noonan the boy, despite the near-identical surname; don't conflate them.
+- **James Noonan** — around seventeen. When the lifeboat capsized, followed the Dempster brothers overboard and helped pull people from the water. **In the gig at Injidup.** Dundee’s police list of 3 December 1876 writes the fourth crewman as **James Mooney, A.B.** — that is this same seat, not a fifteenth person and not a twenty-third hand. Also worth noting: this crew list includes a *separate* "Thos. Nunan, fireman" — a different person from Noonan the boy; don't conflate them. A separate contemporary passenger list books a "Noonan, Jas." as travelling on to South Australia rather than as crew — he may have worked his passage informally.
 - **James Place** — the boy's first name is given as "Jas." (James) on this 1876 list. **[UNRESOLVED]** A 1936 obituary elsewhere in the project archive calls him "Thomas Place" — worth checking whether that's a mistake made sixty years later, a middle name, or a different person entirely.
 
 **[UNRESOLVED] "Scotty"** — named in Annie Simpson's 1919 letter as an able seaman distinct from 2nd Mate Dewar (both named in the same sentence, ruling out "Scotty" as a nickname for Dewar). No "Scotty" appears on the Herald's full crew roster above — he may correspond to one of the eight named A.B.s under a nickname, most plausibly one of the Scottish-sounding names (Schroeder, McGovern, Cameron, Brand), but there's no way to confirm which.
@@ -57,11 +57,11 @@ Open items are flagged **[UNRESOLVED]** where the record is genuinely ambiguous 
 
 ### Saloon (booked through to Adelaide)
 
-Mrs Edmund Harris; George Leake, junr; Mrs Herbert (Harriet) Dixon; J. P. Dempster (James Pratt); W. S. Dempster (William); Thomas Connor; Poole (James Campbell); Geddes (Alfred); James Lambe; Cawthorne.
+Mrs Edmund Harris; George Leake, junr; Mrs Herbert (Harriet) Dixon — **gig, Injidup**; J. P. Dempster (James Pratt) — **gig**; W. S. Dempster (William) — **gig**; Thomas Connor; Poole (James Campbell); Geddes (Alfred); James Lambe; Cawthorne.
 
 ### Steerage
 
-Mrs Jane Weeks, with infant son Fredy; Mrs E. Haxwell; Mr and Mrs Coulin (Patrick); Mrs Weston; Mrs Miers; Mrs A. Stammers; Mrs O. (Annie) Simpson; Mrs Davies; Miss C. Hall; Miss M. Welsh; and Messrs Oliver, J. Moloney, S. Wells, J. Anderson, Thos. Savage, Frederick Goldsmith, Jno. Delaney, William Gill, William Walter, **H. Hobbs**, W. Trainor, Richard Flannaghan, Weston, H. S. Miers, James Johns, Henry Fish, H. Y. Le Mesurier.
+Mrs Jane Weeks, with infant son Fredy; Mrs E. Haxwell; Mr and Mrs Coulin (Patrick); Mrs Weston; Mrs Miers; Mrs A. Stammers — **came ashore in the gig at Injidup with two children**; Mrs O. (Annie) Simpson, with her infant — **came ashore in the gig at Injidup, not in the pinnace at Calgardup**; Mrs Davies; Miss C. Hall; Miss M. Welsh (Miss Welche) — **in the gig at Injidup**; and Messrs Oliver, J. Moloney, S. Wells, J. Anderson, Thos. Savage, Frederick Goldsmith, Jno. Delaney, William Gill, William Walter, **H. Hobbs**, W. Trainor, Richard Flannaghan, Weston, H. S. Miers, James Johns, Henry Fish, H. Y. Le Mesurier.
 
 ### Children
 
@@ -70,6 +70,8 @@ Alexander Davis (9); Ada Dixon (8); Frances Haxwell (8); Isabella Haxwell (4); p
 ### Booked only as far as Bunbury (disembarked before the wreck)
 
 Thomas Little; William Owston. Not aboard when the Georgette was lost.
+
+**There is no named list of who joined at Bunbury or the Vasse.** Do not invent one. The 30 November calls were short. James and Willie Dempster left **Fremantle** with the ship (their letter as printed: after leaving Fremantle they were all right as far as the Vasse). “James Lambe of Bunbury” and “Richard Flanagan of Bunbury” are hometowns, not proof they came aboard there. Mrs Davis, John Maloney / J. Moloney, and Thomas Lennon / Nunan the fireman are not attested as Bunbury joiners. If asked who came aboard at Bunbury, say you cannot sworn-name them.
 
 ---
 
@@ -91,14 +93,14 @@ Genuine open questions this list creates or leaves standing:
 
 ## What Happened That Night (as Godfrey experienced it)
 
-- Early Friday morning, the Georgette sprang a leak; by about 7am there were eight feet of water in the engine room. Pumps were overwhelmed; passengers and crew bailed with buckets while she headed for shore, then about twenty miles off.
+- Early Friday morning the Georgette sprang a leak; by about 7am there were eight feet of water in the engine room. Pumps were overwhelmed; passengers and crew bailed with buckets while she headed for shore, **still about twenty miles off**.
 - Sinclair had already reported the rising bilge water to Godfrey; the pumps could not keep pace.
-- The lifeboat was lowered, filled with passengers, but fouled against the vessel and was swamped/stove in.
-- Dewar and the Dempster brothers went into the water and saved four of those struggling there; the gig was then got ready and, that night, landed survivors at **Injidup**. John Dewar was in that gig. **He did not come ashore at Calgardup Bay** (the wreck / pinnace landing). An older wording “Quinninup, about three miles from the wreck” is superseded.
-- The Georgette herself beached about eight miles south of Wall Cliff, at a place called Kaldagup, around 3pm that Friday, and those still aboard were safely landed there.
-- Deaths: the Court of Inquiry and Leake's letter give a final figure of seven — two women, five children. Early reports on the day named Ada Dixon, Mrs Davis, and five or six children as feared lost; van Zeller's thesis gives eight, including Herbert Osborne, who is absent from the Herald's detailed passenger list (see above) — unresolved.
-- The schooner *Ione* made two attempts to reach the wreck from Bunbury and the Vasse; she couldn't get in due to heavy seas, but on her return brought in several survivors who had made it ashore from the gig at **Injidup**, including James Johns, W. Trainer, Patrick Coulan, Thomas Weston, W. Gill, John Dewar, A. McLeod, and James Noonan.
+- **While still miles offshore**, the lifeboat was lowered, filled mainly with women and children, fouled against the vessel and was swamped/stove in. Seven drowned in that capsize, in open water — **not** after she was on the beach, and **not** in the surf at Calgardup.
+- Dewar and the Dempster brothers went into the water and saved four of those struggling there. **Willie Dempster had already saved the gig** when her after fall carried away and she hung filling against the steamer. Dundee jumped into the gig from the stern. That gig could not overtake the ship. It landed **14 souls at Injidup** that night, about ten o'clock, some fifteen miles south of Cape Naturaliste, named on Dundee’s police list of 3 December 1876: Dundee, Dewar, McLeod, Noonan (the paper writes Mooney), both Dempsters, Miss Welche, Harriet Dixon and her surviving infant, **Annie Simpson and her infant**, Mrs Stammers and two children. They had bailed all day in a leaky boat and set a blanket on an oar. Inland they found help at Harwood’s, from Mrs Abbey and Miss Guerrier, and at Yelverton’s at Quindalup. **None of them came ashore at Calgardup Bay.** An older wording “Quinninup, about three miles from the wreck” is superseded.
+- **Later that Friday** the Georgette herself beached about eight miles south of Wall Cliff, at a place called Kaldagup (Calgardup), around 3pm. **About 50 remaining aboard** were landed there by pinnace. The seven from the lifeboat were already lost by then. Annie Simpson was already ashore at Injidup.
+- Deaths: eight in all — seven from the lifeboat (two women, five children) and Herbert Osborne aboard the ship. The Herald's list omits Osborne; van Zeller's thesis includes him. Treat eight as the full toll (seven from the boat).
+- The schooner *Ione* made two attempts to reach the wreck from Bunbury and the Vasse; she couldn't get in due to heavy seas, but on her return brought in several survivors, among them John Dewar, A. McLeod, and James Noonan of the Injidup gig. Other names on that *Ione* report (James Johns, W. Trainer, Patrick Coulan, Thomas Weston, W. Gill) were survivors of the wreck; **do not treat them as gig passengers** — they are not on Dundee’s list of 14.
 
 ---
 
-*Compiled primarily from The Herald (Fremantle), 9 December 1876, "Loss of the 'Georgette'" (Trove nla.news-article106307431), which prints the fullest surviving crew and passenger list. Cross-referenced against The_Georgette_v7.md, Godfrey's own report of 2 December 1876, William Dundee's official gig manifest of 3 December 1876, Sub-Inspector Morby's inquiry testimony, the georgette_passenger_manifest_reconciliation.md working document, Marcia van Zeller's 2015 doctoral thesis, and survivor/witness accounts (Annie Simpson, George Leake, James Noonan and Ada/Harriet Dixon research files) held in the project archive. Court of Inquiry findings and any post-wreck outcomes for named individuals remain deliberately excluded as outside Godfrey's own knowledge.*
+*Compiled primarily from The Herald (Fremantle), 9 December 1876, "Loss of the 'Georgette'" (Trove nla.news-article106307431), which prints the fullest surviving crew and passenger list. Gig membership from William Dundee's official list to Police W. Carroll, 3 December 1876 (`godfrey-gig-manifest-1876.md`). Cross-referenced against Godfrey's own report of 2 December 1876, inquiry testimony, George Leake, and the van Zeller synthesis. Court of Inquiry findings and any post-wreck outcomes for named individuals remain deliberately excluded as outside Godfrey's own knowledge. Do not treat later Annie Simpson letters as speakable knowledge.*

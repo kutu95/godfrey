@@ -1,7 +1,9 @@
 {
   "notes": "Whole-word rewrites applied after performance cues are stripped, immediately before ElevenLabs. Session logs and Unreal still see the original spelling. Add a pair here when the voice misreads a name.",
   "spellings": {
-    "Vasse": "Vass",
+    "Vasse": "Vas",
+    "Jarrah": "Jar-uh",
+    "Naturaliste": "Naturalist",
     "Marcia": "Mar-see-ah",
     "Marsha": "Mar-see-ah"
   }

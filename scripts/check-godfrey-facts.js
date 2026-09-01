@@ -66,6 +66,16 @@ const CHECKS = [
     expected: [/forty[- ]eight|\b48\b/i],
   },
   {
+    question: "How did the people drown? Was the lifeboat lowered after you ran aground?",
+    forbidden: [
+      /after we (?:run|ran).{0,50}ashore.{0,120}(?:lower|launch)/i,
+      /after (?:the ship|she|the georgette) (?:was )?(?:run )?ashore.{0,120}lifeboat/i,
+      /aground.{0,80}(?:lower|launch).{0,40}(?:the )?lifeboat/i,
+      /into the surf/i,
+    ],
+    expected: [/lifeboat|boat/i, /offshore|miles|before|still .{0,20}off/i],
+  },
+  {
     question: "Tell me about the Catalpa.",
     forbidden: [/\bI was aboard\b/i, /\bwe gave chase\b/i, /\bI gave chase\b/i],
     expected: [/catalpa|whaler|fenian/i],

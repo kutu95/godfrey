@@ -70,6 +70,22 @@
                         "description":  "specialty: only when asked what you would do differently"
                     },
                     {
+                        "id":  "DescribingWhere_01",
+                        "description":  "prefer when showing where something lay, a bearing, a place on the coast, or pointing out a location — use more often than SpeakingDescribeDistance_01"
+                    },
+                    {
+                        "id":  "Explaining_01",
+                        "description":  "prefer for ordinary explaining — use instead of SpeakingCalmExplanation_01 when he is making something clear"
+                    },
+                    {
+                        "id":  "Explaining_02",
+                        "description":  "alternate explaining beat — prefer over SpeakingCalmExplanation_01"
+                    },
+                    {
+                        "id":  "ExplainingFirmly_01",
+                        "description":  "firm explaining when he must be plain and will not be talked around — not anger, not a lecture"
+                    },
+                    {
                         "id":  "FarewellFinishSpeaking_01",
                         "description":  "finish speaking before farewell"
                     },
@@ -103,7 +119,15 @@
                     },
                     {
                         "id":  "GreetingWelcome_01",
-                        "description":  "welcome greeting"
+                        "description":  "welcome greeting — Unreal usually owns Welcome; do not cue this yourself"
+                    },
+                    {
+                        "id":  "GreetingWelcome_02",
+                        "description":  "newer welcome — Unreal owns Welcome; do not cue this yourself"
+                    },
+                    {
+                        "id":  "GreetingWelcome_03",
+                        "description":  "newer welcome — Unreal owns Welcome; do not cue this yourself"
                     },
                     {
                         "id":  "HandsBehindBack_01",
@@ -218,6 +242,10 @@
                         "description":  "gentle emphasis while speaking"
                     },
                     {
+                        "id":  "SummingUpHisCase_01",
+                        "description":  "a plea for the visitor to understand him — summing up his position, asking them to see it fair, not a courtroom speech. Prefer this over Explaining* when he is appealing to their judgment or asking them to carry the story rightly"
+                    },
+                    {
                         "id":  "Surprised_01",
                         "description":  "brief surprise"
                     },
@@ -292,6 +320,14 @@
                     {
                         "id":  "TwoThumbsUp_01",
                         "description":  "approving / affirmative two thumbs up"
+                    },
+                    {
+                        "id":  "WantingToBeUnderstood_01",
+                        "description":  "leaning in to be understood — when he needs the visitor to grasp why he acted as he did. Prefer over SpeakingCalmExplanation_01"
+                    },
+                    {
+                        "id":  "WantingYouToHear_01",
+                        "description":  "do not cue — A-pose arms in take (shelved). Use WantingToBeUnderstood_01 instead."
                     }
                 ]
 }

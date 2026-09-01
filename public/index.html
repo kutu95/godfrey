@@ -269,8 +269,8 @@
         <div class="admin-splash-settings">
           <h3>Response Limit</h3>
           <div class="admin-splash-grid">
-            <label for="maxReplyWordsInput">Max words per response</label>
-            <input id="maxReplyWordsInput" type="number" min="10" max="1000" step="1" value="120" />
+            <label for="maxReplyWordsInput">Max words per response (0 = no hard cap)</label>
+            <input id="maxReplyWordsInput" type="number" min="0" max="1000" step="1" value="0" />
           </div>
           <div class="admin-actions">
             <button id="saveResponseSettingsAdminButton" type="button">Save Response Limit</button>
@@ -330,8 +330,8 @@
             placeholder="e.g. Create a message from Godfrey asking Open Studios visitors to come and see him so he can explain the true story of the Georgette. Max 120 words; plead with emotion."
           ></textarea>
           <div class="admin-splash-grid occasion-meta-grid">
-            <label for="occasionGenerateMaxWords">Max words</label>
-            <input id="occasionGenerateMaxWords" type="number" min="10" max="1000" step="1" value="120" />
+            <label for="occasionGenerateMaxWords">Max words (0 = no hard cap)</label>
+            <input id="occasionGenerateMaxWords" type="number" min="0" max="1000" step="1" value="0" />
           </div>
           <div class="admin-actions">
             <button id="generateOccasionButton" type="button">Generate script</button>

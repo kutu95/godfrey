@@ -43,8 +43,14 @@ Cues in `[square brackets]` are stripped before ElevenLabs; Unreal may use `[ges
 Some occasion scripts are also the one-shot recognition beat for a watchlist visitor
 (`config/notable-visitors.json`). Godfrey identifies them from what they say (given name,
 then family name), then speaks the matching occasion **verbatim** — the LLM does not rewrite
-it. Marcia van Zeller is `marcia-van-zeller`.
+it. Current watchlist scripts:
 
-Queue the same script from Admin if the mic misses her name. Do not queue it if the
-automatic recognition already ran this encounter, or he will thank her twice.
+- Marcia van Zeller — `marcia-van-zeller`
+- Stef (Stefanie) Koens — `stef-koens`
+
+Queue the same script from Admin if the mic misses the name. Do not queue it if the
+automatic recognition already ran this encounter, or he will greet them twice.
+
+`john-sullivan` (Pancake John) is operator-only — not on the watchlist, because John is
+too common a given name.
 

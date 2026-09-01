@@ -103,7 +103,7 @@ let questionsAskedThisSession = 0;
 const CHAT_TIMEOUT_MS = 20000;
 const DEFAULT_SPLASH_SETTINGS = { t1Ms: 1000, t2Ms: 1000 };
 let splashSettings = { ...DEFAULT_SPLASH_SETTINGS };
-let responseSettings = { maxWords: 120 };
+let responseSettings = { maxWords: 0 };
 let adminTestBypassSettings = { bypassAi: false, sampleAudioReady: false };
 let occasionScriptsById = {};
 /** When true, the form is for creating a new occasion (id editable). */
@@ -951,6 +951,7 @@ function updateAdminTestBypassBanner() {
 function parseMaxReplyWords(value, fallback) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
+  if (parsed <= 0) return 0;
   return Math.max(10, Math.min(1000, Math.round(parsed)));
 }
 

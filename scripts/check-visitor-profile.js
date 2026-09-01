@@ -21,6 +21,8 @@ const {
   resetVisitorProfile,
   encounterStage,
   extractName,
+  extractAddressedName,
+  idleResetMs,
   extractSurnameOffer,
   extractSeaExperience,
   extractPlaces,
@@ -28,6 +30,8 @@ const {
   detectAssistantQuestions,
   detectToldTopics,
   looksLikeSelfIdentification,
+  shouldIncludeDocumentsForTurn,
+  getRecentConversationMessages,
 } = require("../lib/visitor-profile");
 const { applyTtsPronunciations } = require("../lib/tts-pronunciations");
 
@@ -50,6 +54,9 @@ for (const [text, expected] of [
   ["They call me Meg, sir.", "Meg"],
   ["Call me Meg.", "Meg"],
   ["I'm Ravi.", "Ravi"],
+  ["Hi, you're talking to Uli.", "Uli"],
+  ["You're speaking with Ollie.", "Ollie"],
+  ["This is Priya speaking.", "Priya"],
   ["I am called Elizabeth Hart", "Elizabeth Hart"],
 ]) {
   check(`${JSON.stringify(text)} -> ${expected}`, () => {
@@ -64,6 +71,7 @@ for (const text of [
   "I am not sure what to ask.",
   "I'm just looking around.",
   "I'm interested in the wreck.",
+  "Were you talking to Hannah?",
   "What is your name?",
   "I am 42 years old.",
 ]) {
@@ -104,6 +112,8 @@ for (const [text, expected] of [
   ["I'm a fisherman out of Albany.", "experienced"],
   ["I've been on the Rottnest ferry a few times.", "passenger"],
   ["I got seasick on a cruise once.", "passenger"],
+  ["I've done some sailing.", "passenger"],
+  ["I sail a bit myself.", "passenger"],
   ["I've never been to sea.", "none"],
   ["No, I'm not a sailor.", "none"],
   ["What was the weather like?", null],
@@ -127,6 +137,7 @@ for (const [text, expected] of [
   ["I think you did all you could.", "sympathetic"],
   ["You should have turned back.", "critical"],
   ["Honestly it's hard to say.", "undecided"],
+  ["I'm on your side.", "sympathetic"],
   ["Tell me more about the lifeboat.", null],
 ]) {
   check(`${JSON.stringify(text)} -> ${expected}`, () => {
@@ -138,11 +149,23 @@ console.log("Reading back what Godfrey asked");
 check("a name question is recognised", () => {
   assert.deepStrictEqual(detectAssistantQuestions("[thinking] Godfrey. And your name?"), ["name"]);
 });
+check("a welcome 'who is it I have before me' is a name question", () => {
+  assert.deepStrictEqual(
+    detectAssistantQuestions("Welcome to Fremantle harbour. Who is it I have before me?"),
+    ["name"]
+  );
+});
 check("a family-name question is recognised", () => {
   assert.deepStrictEqual(detectAssistantQuestions("Marcia. And your family name?"), ["surname"]);
 });
 check("a sea question is recognised", () => {
   assert.deepStrictEqual(detectAssistantQuestions("Have you ever been to sea yourself?"), ["sea"]);
+});
+check("an ally question is recognised as a verdict ask", () => {
+  assert.deepStrictEqual(
+    detectAssistantQuestions("You know what it is like. Will you take my side?"),
+    ["verdict"]
+  );
 });
 check("a plain answer asks nothing", () => {
   assert.deepStrictEqual(detectAssistantQuestions("She was 211 tons net."), []);
@@ -199,9 +222,11 @@ check("sea experience is picked up mid-encounter and shapes the note", () => {
   const block = buildVisitorContextBlock(
     ingestVisitorTurn(key, "Only as a passenger, on the ferry to Rottnest.")
   );
-  assert.match(block, /The sea: has travelled by sea but never worked it/);
+  assert.match(block, /The sea: has sailed themselves/);
+  assert.match(block, /Ask them plainly to be on your side/);
   assert.match(block, /Knows: rottnest/);
   assert.match(block, /do not ask again: their name; whether they have been to sea/);
+  assert.match(block, /They have been on the water/);
 });
 
 check("turn one survives the arrival of a log session id", () => {
@@ -218,7 +243,7 @@ check("turn one survives the arrival of a log session id", () => {
   resetVisitorProfile(identified);
 });
 
-console.log("Topics already told (no chat history on the exhibition path)");
+console.log("Topics already told");
 check("a full death roster is detected", () => {
   const topics = detectToldTopics(
     "Mrs Davis and her boy Alexander, Mrs Elizabeth Hauxwell with John, Frances and Isabella, Ada Dixon, and Herbert Osborne aboard."
@@ -336,9 +361,240 @@ check("Marcia is respelt for the voice as Mar-see-ah", () => {
   assert.match(applyTtsPronunciations("Well, Marcia, I am John."), /Mar-see-ah/);
   assert.doesNotMatch(applyTtsPronunciations("Well, Marcia, I am John."), /\bMarcia\b/);
 });
-check("Vasse is respelt for the voice as Vass", () => {
-  assert.strictEqual(applyTtsPronunciations("We left the Vasse at half past nine."), "We left the Vass at half past nine.");
+check("Vasse is respelt for the voice as Vas", () => {
+  assert.strictEqual(applyTtsPronunciations("We left the Vasse at half past nine."), "We left the Vas at half past nine.");
   assert.doesNotMatch(applyTtsPronunciations("Called at the Vasse, then Adelaide."), /\bVasse\b/);
+});
+check("Jarrah is respelt for the voice as Jar-uh", () => {
+  assert.strictEqual(applyTtsPronunciations("Loaded jarrah at Bunbury."), "Loaded Jar-uh at Bunbury.");
+  assert.doesNotMatch(applyTtsPronunciations("The Jarrah was stowed below."), /\bJarrah\b/);
+});
+check("Naturaliste is respelt for the voice as Naturalist", () => {
+  assert.strictEqual(
+    applyTtsPronunciations("Fifteen miles south of Cape Naturaliste."),
+    "Fifteen miles south of Cape Naturalist."
+  );
+  assert.doesNotMatch(applyTtsPronunciations("Rounding Cape Naturaliste."), /\bNaturaliste\b/);
+});
+
+console.log("Notable visitor watchlist (Stef Koens)");
+const stefKey = resolveVisitorSessionKey({ explicitId: "selftest-stef" });
+resetVisitorProfile(stefKey);
+
+check("asking about her is not self-identification", () => {
+  assert.strictEqual(looksLikeSelfIdentification("Do you know Stef Koens?", false), false);
+});
+check("a question about her does not confirm the watchlist", () => {
+  const block = buildVisitorContextBlock(ingestVisitorTurn(stefKey, "Do you know Stef Koens?"));
+  assert.doesNotMatch(block, /Stef Koens/);
+  assert.doesNotMatch(block, /sunken ships/);
+  assert.strictEqual(peekPendingNotableRecognition(stefKey), null);
+  resetVisitorProfile(stefKey);
+});
+check("a full self-introduction confirms her at once", () => {
+  ingestVisitorTurn(stefKey, "My name is Stefanie Koens.");
+  const pending = peekPendingNotableRecognition(stefKey);
+  assert.ok(pending);
+  assert.strictEqual(pending.id, "stef-koens");
+  const block = buildVisitorContextBlockForSession(stefKey);
+  assert.match(block, /Name: Stef Koens/);
+  assert.match(block, /write stories about sunken ships/);
+  assert.match(block, /Address them as Stef/);
+  resetVisitorProfile(stefKey);
+});
+check("Stef alone asks for the family name, and does not recognise yet", () => {
+  ingestAssistantTurn(stefKey, "Godfrey. And your name?", { visitorText: "Hello." });
+  const block = buildVisitorContextBlock(ingestVisitorTurn(stefKey, "Stef"));
+  assert.match(block, /Name: Stef/);
+  assert.match(block, /family name/);
+  assert.doesNotMatch(block, /You recognised her/);
+  assert.strictEqual(peekPendingNotableRecognition(stefKey), null);
+});
+check("a matching surname then unlocks the one-shot recognition", () => {
+  ingestAssistantTurn(stefKey, "Stef. And your family name?", { visitorText: "Stef" });
+  ingestVisitorTurn(stefKey, "Koens");
+  const pending = peekPendingNotableRecognition(stefKey);
+  assert.ok(pending);
+  assert.strictEqual(pending.occasionId, "stef-koens");
+  const { getOccasionScript } = require("../lib/occasion-scripts");
+  assert.ok(getOccasionScript("stef-koens")?.text.includes("sunken ships"));
+  markNotableRecognitionDelivered(stefKey);
+  assert.strictEqual(peekPendingNotableRecognition(stefKey), null);
+  const block = buildVisitorContextBlockForSession(stefKey);
+  assert.match(block, /already spoken your note/);
+  assert.doesNotMatch(block, /This is the turn to recognise her/);
+  resetVisitorProfile(stefKey);
+});
+check("STT aliases still confirm (Stephanie / Coens)", () => {
+  ingestVisitorTurn(stefKey, "I'm Stephanie Coens");
+  assert.strictEqual(peekPendingNotableRecognition(stefKey)?.id, "stef-koens");
+  resetVisitorProfile(stefKey);
+});
+check("Koens is respelt for the voice as Koons", () => {
+  assert.match(applyTtsPronunciations("Well, Stef Koens, I am glad."), /Koons/);
+  assert.doesNotMatch(applyTtsPronunciations("Well, Stef Koens, I am glad."), /\bKoens\b/);
+});
+check("a different surname after Stef is not a recognition", () => {
+  ingestAssistantTurn(stefKey, "And your family name?", { visitorText: "Stef" });
+  ingestVisitorTurn(stefKey, "Stef");
+  ingestVisitorTurn(stefKey, "Smith");
+  assert.strictEqual(peekPendingNotableRecognition(stefKey), null);
+  const block = buildVisitorContextBlockForSession(stefKey);
+  assert.match(block, /Name: Stef Smith/);
+  assert.doesNotMatch(block, /sunken ships/);
+  resetVisitorProfile(stefKey);
+});
+
+console.log("John is not a watchlist given name");
+const johnKey = resolveVisitorSessionKey({ explicitId: "selftest-john-not-watchlist" });
+resetVisitorProfile(johnKey);
+check("a plain John does not prompt for a watchlist surname", () => {
+  ingestAssistantTurn(johnKey, "Godfrey. And your name?", { visitorText: "Hello." });
+  const block = buildVisitorContextBlock(ingestVisitorTurn(johnKey, "John"));
+  assert.match(block, /Name: John/);
+  assert.doesNotMatch(block, /family name/);
+  assert.doesNotMatch(block, /Pancake/);
+  assert.strictEqual(peekPendingNotableRecognition(johnKey), null);
+  resetVisitorProfile(johnKey);
+});
+check("John Sullivan does not auto-recognise", () => {
+  ingestVisitorTurn(johnKey, "My name is John Sullivan.");
+  assert.strictEqual(peekPendingNotableRecognition(johnKey), null);
+  const block = buildVisitorContextBlockForSession(johnKey);
+  assert.doesNotMatch(block, /never been invited/);
+  resetVisitorProfile(johnKey);
+});
+
+console.log("Recent conversation window");
+const historyKey = resolveVisitorSessionKey({ explicitId: "selftest-recent-turns" });
+resetVisitorProfile(historyKey);
+const welcomePrompt =
+  "(A visitor has just approached and stands before you. Welcome them warmly in one or two short sentences, in character. Do not wait for them to speak first.)";
+
+check("a spoken 'you're talking to' name is kept, and the welcome ask is not repeated", () => {
+  ingestVisitorTurn(historyKey, welcomePrompt);
+  ingestAssistantTurn(historyKey, "Welcome to Fremantle harbour. Who is it I have before me?", {
+    visitorText: welcomePrompt,
+  });
+  const named = buildVisitorContextBlock(ingestVisitorTurn(historyKey, "Hi, you're talking to Uli."));
+  assert.match(named, /Name: Uli/);
+  assert.match(named, /do not ask again: their name/);
+  assert.match(named, /Never ask who you are speaking with/);
+  assert.doesNotMatch(named, /You do not know their name/);
+});
+
+check("the exhibition path gets prior turns, with the welcome instruction stored as a stub", () => {
+  const messages = getRecentConversationMessages(historyKey, "Hi, you're talking to Uli.");
+  assert.strictEqual(messages[0].role, "user");
+  assert.strictEqual(messages[0].content, "[A visitor has just walked up.]");
+  assert.strictEqual(messages[1].role, "assistant");
+  assert.match(messages[1].content, /Who is it I have before me/);
+  assert.strictEqual(messages[messages.length - 1].role, "user");
+  assert.strictEqual(messages[messages.length - 1].content, "Hi, you're talking to Uli.");
+});
+
+check("the live welcome request still sends the real instruction, not the stub", () => {
+  const liveKey = resolveVisitorSessionKey({ explicitId: "selftest-live-welcome" });
+  resetVisitorProfile(liveKey);
+  ingestVisitorTurn(liveKey, welcomePrompt);
+  const live = getRecentConversationMessages(liveKey, welcomePrompt);
+  assert.strictEqual(live.length, 1);
+  assert.strictEqual(live[0].content, welcomePrompt);
+  resetVisitorProfile(liveKey);
+});
+
+check("the window stays short and always starts on a visitor turn", () => {
+  const trimKey = resolveVisitorSessionKey({ explicitId: "selftest-trim-turns" });
+  resetVisitorProfile(trimKey);
+  for (let i = 1; i <= 6; i += 1) {
+    ingestVisitorTurn(trimKey, `Visitor turn ${i}`);
+    ingestAssistantTurn(trimKey, `Assistant turn ${i}.`, { visitorText: `Visitor turn ${i}` });
+  }
+  ingestVisitorTurn(trimKey, "Visitor turn 7");
+  const trimmed = getRecentConversationMessages(trimKey, "Visitor turn 7");
+  assert.ok(trimmed.length <= 8, `expected <= 8 messages, got ${trimmed.length}`);
+  assert.strictEqual(trimmed[0].role, "user");
+  assert.strictEqual(trimmed[trimmed.length - 1].content, "Visitor turn 7");
+  assert.doesNotMatch(trimmed[0].content, /Visitor turn 1/);
+  resetVisitorProfile(trimKey);
+});
+resetVisitorProfile(historyKey);
+
+console.log("Encounter memory");
+check("idle gap outlasts a long spoken reply", () => {
+  assert.ok(idleResetMs() >= 8 * 60_000, `idleResetMs=${idleResetMs()} must cover ~90s of speech plus thinking`);
+});
+check("a name Godfrey already used is kept even if the visitor phrasing was odd", () => {
+  assert.strictEqual(extractAddressedName("Thank you, Uli. [short pause] Well, you’ve come to the man himself."), "Uli");
+  assert.strictEqual(
+    extractAddressedName("That’s the truth of it. Uli, would you have stood otherwise in my place?"),
+    "Uli"
+  );
+  assert.strictEqual(extractAddressedName("Ada Dixon was only eight. Seven of them drowned."), null);
+  assert.strictEqual(extractAddressedName("Well, I’m here to answer it. You want the truth of it?"), null);
+});
+check("a known name is still on the card after the wreck telling and a sympathy turn", () => {
+  const key = resolveVisitorSessionKey({ explicitId: "selftest-uli-memory" });
+  resetVisitorProfile(key);
+  ingestVisitorTurn(key, welcomePrompt);
+  ingestAssistantTurn(
+    key,
+    "You found me, then. Before you begin, give me your name. I’ve given mine.",
+    { visitorText: welcomePrompt }
+  );
+  ingestVisitorTurn(key, "Uli");
+  ingestAssistantTurn(key, "Thank you, Uli. Say what you will.", { visitorText: "Uli" });
+  ingestVisitorTurn(key, "What happened on the night?");
+  ingestAssistantTurn(
+    key,
+    "That’s the truth of it. Uli, would you have stood otherwise in my place?",
+    { visitorText: "What happened on the night?" }
+  );
+  const block = buildVisitorContextBlock(ingestVisitorTurn(key, "I feel bad about the people who died."));
+  assert.match(block, /Name: Uli/);
+  assert.match(block, /Never ask who you are speaking with/);
+  assert.doesNotMatch(block, /You do not know their name/);
+  resetVisitorProfile(key);
+});
+
+console.log("Exhibition document search gating");
+check("Welcome / R10 / farewell skip file_search", () => {
+  assert.deepStrictEqual(
+    shouldIncludeDocumentsForTurn(
+      "(A visitor has just approached and stands before you. Welcome them warmly in one or two short sentences, in character. Do not wait for them to speak first.)"
+    ),
+    { include: false, reason: "unreal-owned" }
+  );
+  assert.strictEqual(
+    shouldIncludeDocumentsForTurn(
+      "(The visitor has been quiet for a few seconds. Continue the conversation naturally in one or two short sentences that follow from what was just said.)"
+    ).include,
+    false
+  );
+  assert.strictEqual(
+    shouldIncludeDocumentsForTurn(
+      "(The visitor has walked away and left the scene. Bid them a brief goodbye — use their name if you know it. One short sentence only. End with [farewell].)"
+    ).include,
+    false
+  );
+});
+check("small talk skips file_search", () => {
+  assert.deepStrictEqual(shouldIncludeDocumentsForTurn("Hi, I'm Stephanie."), {
+    include: false,
+    reason: "chat-followup",
+  });
+  assert.strictEqual(shouldIncludeDocumentsForTurn("Do you like drinking whisky?").include, false);
+  assert.strictEqual(shouldIncludeDocumentsForTurn("Did you always want to be a captain?").include, false);
+});
+check("wreck / board / named-ship questions include file_search", () => {
+  assert.deepStrictEqual(shouldIncludeDocumentsForTurn("Yes, I would love for you to talk about the shipwreck."), {
+    include: true,
+    reason: "source-grounding",
+  });
+  assert.strictEqual(shouldIncludeDocumentsForTurn("What could you have done differently?").include, true);
+  assert.strictEqual(shouldIncludeDocumentsForTurn("But what about the Laughing Wave?").include, true);
+  assert.strictEqual(shouldIncludeDocumentsForTurn("What can you tell me about Annie Simpson?").include, true);
+  assert.strictEqual(shouldIncludeDocumentsForTurn("Why do you think the board judged you hard?").include, true);
 });
 
 console.log("");

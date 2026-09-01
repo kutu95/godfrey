@@ -34,6 +34,8 @@ for (const text of [
   "that's all",
   "thanks for your time",
   "see you",
+  "see you later",
+  "hope to see you again",
   "bye",
 ]) {
   check(`${JSON.stringify(text)} is a farewell`, () => {
@@ -47,6 +49,15 @@ for (const text of [
   "Tell me about the board.",
   "Hello, Godfrey.",
   "What happened to the ship?",
+  "It's good to see you back, Godfrey.",
+  "good to see you",
+  "nice to see you",
+  "great to see you",
+  "It's so good to see you",
+  "I want to see you clap your hands.",
+  "I want to see you clap your hands",
+  "Can you clap your hands?",
+  "Let me see you do that",
 ]) {
   check(`${JSON.stringify(text)} is not a farewell`, () => {
     assert.strictEqual(detectVisitorFarewellIntent(text), false);

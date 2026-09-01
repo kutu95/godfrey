@@ -32,12 +32,22 @@ async function uploadDocuments() {
   });
   const lowercaseNames = new Set(candidateFiles.map((file) => file.toLowerCase()));
   const hasGeorgeLeakeMarkdown = lowercaseNames.has("george leake.md");
+  const hasVanZellerSynthesis = lowercaseNames.has("van-zeller-synthesis.md");
+  const hasInquiryMarkdown = lowercaseNames.has("georgette-inquiry-1876.md");
 
   const files = [];
   for (const filename of candidateFiles) {
     const lower = filename.toLowerCase();
     if (hasGeorgeLeakeMarkdown && lower === "acc871a.pdf") {
       console.warn("Skipping acc871a.pdf because George Leake.md is present (duplicate source).");
+      continue;
+    }
+    if (hasVanZellerSynthesis && lower.includes("vanzeller") && lower.endsWith(".pdf")) {
+      console.warn("Skipping " + filename + " because van-zeller-synthesis.md is present (exegesis only; do not upload the novel).");
+      continue;
+    }
+    if (hasInquiryMarkdown && lower.includes("inquiry") && lower.endsWith(".pdf")) {
+      console.warn("Skipping " + filename + " because georgette-inquiry-1876.md is present (distilled inquiry; do not upload the transcript PDF).");
       continue;
     }
     const fullPath = path.join(docsDir, filename);

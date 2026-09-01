@@ -26,6 +26,12 @@ two is the single largest win available on this path.
 - Failures throw `PIPELINE_FALLBACK_CODE` and the Brain falls back to the original HTTP
   path automatically, but **only while no audio has been sent**. Once PCM is flowing there
   is nowhere to fall back to, so the error propagates.
+- If the LLM token stream goes idle for **8 seconds** after it has started (`LLM_IDLE_TIMEOUT_MS`),
+  the pipeline aborts the model request and flushes ElevenLabs with the text so far, then
+  `res.end()`. Without this, Unreal is left playing a truncated reply with HTTP still open,
+  so the audio-end watchdog will not finish the utterance (silent lip-sync). Unreal also
+  recovers on its own after `GodfreyAceIngestStallTimeoutSeconds` of no new PCM once
+  playback has caught what was sent.
 
 **Things that had to be handled**
 
@@ -52,33 +58,19 @@ directions aloud.
 
 ---
 
-## Reply length and the word cap
+## Reply length
 
-The cap lives in `response-config.json` (`maxWords`, currently **80**), editable from the
-admin UI.
+Live visitor replies have **no hard word quota**. `response-config.json` `maxWords` is **0**
+by default (admin UI: 0 = no cap). The 80-word guillotine was removed because it cut him
+mid-sentence (`"...all their hours ahead"`). Length is now by instruction: answer, then wait;
+do not recap the wreck unless asked (`BREVITY_ADDENDUM` in `server.js`).
 
-The pipeline used to break the LLM stream the instant the running word count reached the
-cap, wherever that happened to land. On 2026-08-01 this produced a reply ending
-`"...can't stop progress. You prefer one"` — cut mid-question, and the audio faithfully
-spoke the truncation. It sounds like a crash, not a word limit.
+A runaway ceiling remains: `MAX_RESPONSE_TOKENS` (420) on the OpenAI request, so a dump
+cannot run for minutes. If an operator sets `maxWords` above 0, the old pipeline behaviour
+returns — stop at a sentence end past the cap, with `WORD_CAP_SENTENCE_GRACE_WORDS` (25) as
+a hard extra, and `limitResponseToWordCount` on the non-pipelined / chat path.
 
-The cap now lets Godfrey finish the sentence he is in:
-
-- Past `maxWords`, keep streaming until the text ends on sentence punctuation.
-- Hard ceiling of `WORD_CAP_SENTENCE_GRACE_WORDS` (25) past the cap so a rambling reply
-  cannot run away.
-- An abbreviation guard prevents `"He sailed with Capt."` being mistaken for a sentence end.
-
-**The OpenAI token budget must cover the grace window.** `buildGodfreyOpenAIRequestParams`
-budgets for `maxWords + WORD_CAP_SENTENCE_GRACE_WORDS`. If it budgets only for `maxWords`,
-the API-level `max_output_tokens` cap binds first and reproduces the exact mid-phrase cut
-the grace exists to prevent.
-
-Related constants in `server.js`: `estimateTokenBudgetFromWordLimit` assumes 2.2 tokens per
-word, with a hard ceiling of `MAX_RESPONSE_TOKENS` (420).
-
-The non-pipelined path is separate and uses `limitResponseToWordCount`, which truncates and
-appends an admin notice. It does not have sentence grace.
+Occasion drafts still honour an explicit word cap when the operator types one.
 
 ---
 
